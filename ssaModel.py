@@ -77,6 +77,8 @@ class ssa1D:
 
         if fbmkwargs:
             self.fbm = FBMTracer(**fbmkwargs)
+        else:
+            self.fbm = None
 
         self.t = 0
 
@@ -251,15 +253,15 @@ class ssa1D:
             # Compute the new U and H fields
             self.step(dt,accum)
             # Advect the FBM tracer particles
-            self.fbm.advect_particles(self.U, dt)
+            if self.fbm is not None:
+                self.fbm.advect_particles(self.U, dt)
             # Advance the time
             self.t += dt
             # Check if calving-criterion is met anywhere
-            if self.fbm.check_calving(self.U, self.U0):
+            if self.calve_flag and self.fbm.check_calving(self.U, self.U0):
                 # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
-                if self.calve_flag:
-                    self.calve(xc)
+                self.calve(xc)
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
