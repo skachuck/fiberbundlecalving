@@ -18,12 +18,20 @@ class ssa1D:
     def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3,
                 advect_front=False, calve_flag=False,fbmkwargs={}):
         """
+        Evolves a 1D ice shelf using the shallow shelf approximation.
+
         mesh = FEM mesh for model
         U0 = Inflow velocity at the grounding line (m/s)
         H0 = Ice thickness at the grounding line (m)
-        C = Drag coefficient
-        m = drag exponent
+        beta = Drag coefficient
+        m = Drag exponent
         order = Order of the function space (typically 1 or 2)
+
+        advect_front = if True, front advects with the front velocity, 
+            mesh evolves using Arbitrary Lagrange-Euler (ALE) method.
+        calve_flag = if True,
+
+
 
         We use CG function spaces for velocity and DG function spaces
         for ice thickness and solve the continuity equation simultaneously with
@@ -32,6 +40,7 @@ class ssa1D:
         self.U0 = U0
         self.H0 = H0
 
+        # Basal drag parameters
         self.beta = beta
         if isinstance(beta, (float, int)):
             self.beta = Constant(beta)
@@ -64,10 +73,7 @@ class ssa1D:
         #self.obslist = [UniformCalvingFrontObserver(self, 100000, 0.01)]
         self.obslist = [CalveObserver(self)]
         self.advect_front = advect_front
-        self.calve_flag = calve_flag
-
-        self.fbm = np.random.rand(Nx+1)*0.2+2.8
-        #self.fbm = 2.87*np.ones(Nx+1)
+        self.calve_flag = calve_flag 
 
         if fbmkwargs:
             self.fbm = FBMTracer(**fbmkwargs)
@@ -230,7 +236,7 @@ class ssa1D:
 
     def integrate(self,H,U,dt=86400.0,Nt=1,accum=1e-16):
         """
-        Integrate systems of equations
+        Integrate systems of equations for Nt steps.
         H = ice thickness
         U = velocity
         dt = time step (seconds)
@@ -239,22 +245,18 @@ class ssa1D:
         """
         self.H, self.U = H, U
         for i in xrange(Nt):
+            # Advect the front
             if self.advect_front:
                 self.advect_mesh(self.U, dt)
+            # Compute the new U and H fields
             self.step(dt,accum)
-
-            #broken = self.check_threshold()
-            #if self.calve_flag and broken:
-            #    #print(np.log(self.U.vector().get_local()/self.U0).max())
-            #    old_Lx = self.Lx
-            #    self.calve(broken)
-                #print(np.log(self.U.vector().get_local()/self.U0).max())
-                #for obs in self.obslist: obs.notify_calving(self)
+            # Advect the FBM tracer particles
             self.fbm.advect_particles(self.U, dt)
-            
+            # Advance the time
             self.t += dt
-
+            # Check if calving-criterion is met anywhere
             if self.fbm.check_calving(self.U, self.U0):
+                # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
                 if self.calve_flag:
                     self.calve(xc)
@@ -264,6 +266,8 @@ class ssa1D:
         return self.H,self.U
 
     def step(self,dt=86400.0,accum=1e-16):
+        """Step forward in time once.
+        """
         # Define variational forms
         L1 = self.velocity(self.H)
         L2 = self.advect(self.H,self.U,dt=dt,accum=accum)
@@ -288,44 +292,54 @@ class ssa1D:
         prm["newton_solver"]["absolute_tolerance"]=1.0
 
         solver.solve()
+        # Store the solutions internally.
         self.H,self.U=dq.split(deepcopy = True)
 
-    
-
     def advect_mesh(self, U, dt):
-       
+        """Advectt he mesh with the velocity field U over timestep U.
+        """
+        # First, create the new boundary by moving the calving front only.
         boundary = BoundaryMesh(self.mesh, "exterior")
         for x in boundary.coordinates():
+            # Janky check, works in 1D
             if x[0] != 0:
                 Lx = x[0] + U.vector().get_local()[0]*dt
                 x[0] = Lx
                 self.Lx = Lx
-        #print("Advecting front to {}".format(x)) 
 
-        new_mesh = Mesh(self.mesh)
+        # Copty the mesh, just in case
+        old_mesh = Mesh(self.mesh)
+        # Stretch the mesh using the new boundary.
         ALE.move(self.mesh, boundary) 
-
-        del new_mesh
+        # Do some checks!?
+        # ?????
+        # Delete the old mesh
+        del old_mesh
+        # Rebuild the mesh box.
         self.mesh.bounding_box_tree().build(self.mesh)
 
     def continuousH(self, H=None):
+        """Convenience function for DG H (stored) to CG H (useful).
+        """
         H = H or self.H
         return interpolate(self.H, self.Q_cg)
 
     @property
     def data(self):
+        """Convenience function for saving (x, H, U)
+        """
         return np.vstack([self.mesh.coordinates().squeeze()[::-1],
                             self.continuousH().vector().get_local(),
                             self.U.vector().get_local()])
 
 
     def calve(self, xc):
+        """Calve the ice shelf at xc, and remesh.
+        """
         assert xc < self.Lx
 
         # Make post-calving mesh
         new_mesh = IntervalMesh(self.Nx, 0.0, xc)
-        #print('Initial U at xc:                {}'.format(self.U(xc)))
-        #print('local U at front before remesh: {}'.format(self.U.vector().get_local()[0]))
 
         # Create new function spaces on this mesh
         Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec = self.init_function_space(new_mesh,self.order)
@@ -348,45 +362,13 @@ class ssa1D:
 
 
         self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, self.ncell, self.hcell, self.v, self.v_vec, self.phi, self.phi_vec = Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec 
-
-        # Now interpolate values to new calving front    
-#        Hcg = interpolate(self.H, self.Q_cg)
-#        Hcg.vector().set_local(np.array([Hcg(i) for i in
-#                                new_mesh.coordinates()][::-1]))
-#        self.H = interpolate(Hcg,self.Q)
-        
-
-        
-        #interpedUnewMesh = np.array([self.U(i) for i in new_mesh.coordinates()][::-1])
-        #newU = project(self.U, VectorFunctionSpace(new_mesh,'CG',1))
-        #print('proj new_mesh U at xc:          {}'.format(newU(xc)))
-        #self.U.vector().set_local(newU.vector().get_local())
-
-
         # Dispose of original mesh and replace
         del self.mesh
         self.mesh = new_mesh
-        #self.U.vector().set_local(interpedUnewMesh)
-        #print('local U at front after remesh:  {}'.format(self.U.vector().get_local()[0]))
-        #print('Interpd U after remesh:         {}'.format(self.U(xc)))
-        #self.fbm = np.random.rand(self.Nx+1)*0.2+2.8
 
         for obs in self.obslist: obs.notify_calve(self.Lx, xc, self.t)
 
         self.Lx = xc
-
-    def check_threshold(self):
-        #strains = project(ln(self.U[0]/Constant(self.U0)),self.Q_cg).vector().get_local()
-        strains = np.log(self.U.vector().get_local()/self.U0)
-        brokeninds = np.argwhere(self.fbm<strains)
-   
-        if brokeninds.size>0:
-            lowest_broken = float(self.mesh.coordinates()[::-1][brokeninds[-1]+1])
-            #print(self.fbm[brokeninds[-1]])
-            #print(strains[brokeninds[-1]])
-            return lowest_broken
-        else:
-            return False
 
     def plot_hu(self,U0=None,H0=None):
 
@@ -460,17 +442,22 @@ class FBMTracer(object):
         self.N -= 1
 
     def check_calving(self, Ufunc, U0):
+        """Check if any FBMs have exceeded their thresholds.
+        """
         U = np.array([Ufunc(x) for x in self.x])
-        strains = np.log(U/U0)       
+        strains = np.log(U/U0)
         broken = np.argwhere(self.s < strains)
         if len(broken) > 0:
-            # Temporarily save the broken index, will be deleted
+            # Temporarily save the lowest broken index, 
+            # will be deleted after calving.
             self._minbroken = np.min(broken)
             return True
         else:
             return False
 
     def calve(self, i=None):
+        """Remove broken FBMs and FBMs connected to the front.
+        """
         i = i or self._minbroken
         del self._minbroken
         xc = self.x[i]
@@ -480,19 +467,32 @@ class FBMTracer(object):
             j-=1
         return xc
 
+
+#### SOME THRESHOLD DISTRIBUTION FUNCTIONS ####
 def retconst(const):
+    """Returns the constant const
+    """
     def f():
         return const
     return f
 
 def uni_dist(lo,hi):
+    """Uniform distribution between lo and hi
+    """
     def f():
         return lo + (hi-lo)*np.random.rand()
     return f
 
 def weib_dist(l,a):
+    """Weibull distribution with factor l and shape a
+    """
     def f():
         return np.random.weibull(a)*l
+    return f
+
+def norm_dist(mu,sig):
+    def f():
+        return (np.random.randn()+mu)*sig
     return f
 
 def determine_F(ssamodel):
