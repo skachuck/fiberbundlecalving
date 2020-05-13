@@ -258,7 +258,7 @@ class ssa1D:
             # Advance the time
             self.t += dt
             # Check if calving-criterion is met anywhere
-            if self.calve_flag and self.fbm.check_calving(self.U, self.U0):
+            if self.calve_flag and self.fbm.check_calving(self):
                 # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
                 self.calve(xc)
@@ -396,18 +396,36 @@ class ssa1D:
 
 
 class FBMTracer(object):
-    def __init__(self, Lx, N0, dist, xsep=1e16):
+    def __init__(self, Lx, N0, dist=None, thresh=None, xsep=1e16):
         """
         A container for tracer particles in a 1D fenics ice dynamics model.
 
         The tracers advect with the fluid velocity, but do not affect the flow
         until the fiber bundle models they carry break, at which point calving
         is triggered in the ice flow model.
+
+        Parameters
+        ----------
+        Lx : the length of the system
+        N0 : the initial number of particles (spread evenly through the ice
+            sheet)
+        dist : a function that returns a random threshold
+        thresh(x, ssaModel) : a function that computes the threshold value from
+            the ssaModel at locations x.
+        xsep : the separation of particles when added to the system
+
+        Data
+        ----
+        N : number of particles
+        x : location of particles
+        s : threshold of particles
         """
         self.x = list(np.linspace(0,Lx,N0,endpoint=False))
-        self.s = [dist() for i in range(N0)]
         self.N = N0
-        self.dist = dist
+        self.dist = dist or retconst(1.)
+        self.thresh = thresh or strain_thresh
+        # Now create the original 
+        self.s = [self.dist() for i in range(N0)]
         self.xsep = xsep
 
     def advect_particles(self, Ufunc, dt):
@@ -425,7 +443,8 @@ class FBMTracer(object):
 
     def add_particle(self, xp):
         """
-        Introduce a new particle at location xp.
+        Introduce a new particle at location xp with threshold drawn from
+        self.dist.
         """
         for i in range(self.N):
             if self.x[i] > xp:
@@ -443,11 +462,11 @@ class FBMTracer(object):
         self.s.pop(i)
         self.N -= 1
 
-    def check_calving(self, Ufunc, U0):
+    def check_calving(self, ssaModel):
         """Check if any FBMs have exceeded their thresholds.
         """
-        U = np.array([Ufunc(x) for x in self.x])
-        strains = np.log(U/U0)
+        strains = self.thresh(self.x, ssaModel)
+        
         broken = np.argwhere(self.s < strains)
         if len(broken) > 0:
             # Temporarily save the lowest broken index, 
@@ -470,7 +489,7 @@ class FBMTracer(object):
         return xc
 
 
-#### SOME THRESHOLD DISTRIBUTION FUNCTIONS ####
+#### SOME THRESHOLD DISTRIBUTION GENERATORS ####
 def retconst(const):
     """Returns the constant const
     """
@@ -496,6 +515,19 @@ def norm_dist(mu,sig):
     def f():
         return (np.random.randn()+mu)*sig
     return f
+
+
+#### SOME THRESHOLD VALUE FUNCTIONS ####
+def strain_thresh(x, ssaModel):
+    """
+    Compute strain from grounding line.
+    """
+    # Interpolate to locations x
+    U = np.array([ssaModel.U(x) for x in self.x])
+    # Analytical form for strain in 1D
+    strains = np.log(U/ssaModel.U0)
+    return strains
+
 
 def determine_F(ssamodel):
     grad_h = project(grad(ssamodel.H),ssamodel.Q_cg_vec)
