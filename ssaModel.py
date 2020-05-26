@@ -482,12 +482,14 @@ class FBMTracer(object):
         self.x = self.x.tolist()
         self.s = self.s.tolist()
         self.state = self.state.tolist()
+        self.listform = True
 
     def _toArr(self):
         if not self.listform: return
         self.x = np.asarray(self.x)
         self.s = np.asarray(self.s)
         self.state = np.asarray(self.state)
+        self.listform = False
 
     def remove_particle(self, i):
         """
@@ -573,13 +575,6 @@ def strain_ddt(x, ssaModel):
     strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
     return strainFunc(x)
 
-def strain_ddt_criticalstress(stress_c, stressFunc=compute_shear):
-    def strain_ddt(x, ssaModel):
-        stress = stressFunc(ssaModel)
-        strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-        return strainFunc(x)*(stress>stress_c)
-    return strain_ddt
-
 def compute_shear(ssaModel):
     def epsilon(u):
         return 0.5*(nabla_grad(u)+nabla_grad(u).T)
@@ -598,6 +593,14 @@ def compute_shear(ssaModel):
     tau11 = project(eta(ssaModel.U)*grad(ssaModel.U)[0,0], ssaModel.Q_cg)
 
     return tau11
+
+def strain_ddt_criticalstress(stress_c, stressFunc=compute_shear):
+    def strain_ddt(x, ssaModel):
+        stress = stressFunc(ssaModel)
+        strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
+        return strainFunc(x)*(stress>stress_c)
+    return strain_ddt
+
 
 #### OBSERVER CLASS FOR RECORDING SIMULATION ####
 
@@ -674,7 +677,7 @@ if __name__ == '__main__':
     
     fbmkwargs={'Lx':Lx,
                    'N0':100,
-                   'xsep':2000,
+                   'xsep':200,
                    'dist':retconst(2.8),
                 'stepState':strain_ddt}
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
