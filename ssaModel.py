@@ -429,6 +429,14 @@ class FBMTracer(object):
         x : location of particles
         s : threshold of particles
         state : the state of each particle
+
+        Methods
+        -------
+        advect_particles
+        add_particle
+        remove_particle
+        check_calving
+        calve
         """
         self.x = list(np.linspace(0,Lx,N0,endpoint=False))
         self.N = N0
