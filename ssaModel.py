@@ -752,13 +752,21 @@ if __name__ == '__main__':
     # Calving check: advect a few timesteps, calve back to x=200000, 10 times
     if 'calvecheck' in sys.argv:
         fronts = []
-        ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
+        mesh = IntervalMesh(Nx, 0.0, Lx)
+        ssaModel =ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=False)
+        H,U=ssaModel.init_shelf(accum)
+        ssaModel.H, ssaModel.U = H, U
         for i in range(10):
             hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=86400.,Nt=100,
                                             accum=Constant(1*accum))
             fronts.append(ssaModel.Lx)
             ssaModel.calve(Lx)
             H,U=ssaModel.init_shelf(accum)
+
+        plt.plot(*ssaModel.obslist[0].data)
+        plt.xlabel('Time (s)')
+        ply.ylabel('Ice Front Position (m)')
+        plt.show()
 
     # Mesh-refinement convergence test for time-stepping
     if 'dxconv' in sys.argv: 
