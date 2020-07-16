@@ -59,8 +59,10 @@ class ssa1D:
 
         self.C = (self.rho_i*self.g*(self.rho_w-self.rho_i)/4/self.B/self.rho_w)**(self.n)
         # Setup evenly spaced grid (This need to change for 2D solution)
-        self.Nx=Nx; self.Lx=Lx
+        #self.Nx=Nx; self.Lx=Lx
         #mesh = IntervalMesh(Nx, 0.0, Lx)
+        self.Nx = len(mesh.coordinates())-1
+        self.Lx = np.max(mesh.coordinates())
         self.mesh = Mesh(mesh)
         
         self.order = order
@@ -503,7 +505,7 @@ class FBMTracer(object):
         """
         Revmoce ith particle from the flow, used in calving.
         """
-        self.toList()
+        self._toList()
         self.x.pop(i)
         self.s.pop(i)
         self.state.pop(i)
@@ -765,7 +767,7 @@ if __name__ == '__main__':
 
         plt.plot(*ssaModel.obslist[0].data)
         plt.xlabel('Time (s)')
-        ply.ylabel('Ice Front Position (m)')
+        plt.ylabel('Ice Front Position (m)')
         plt.show()
 
     # Mesh-refinement convergence test for time-stepping
