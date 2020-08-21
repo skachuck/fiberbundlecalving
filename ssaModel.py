@@ -16,7 +16,7 @@ parameters['allow_extrapolation'] = True
 
 class ssa1D:
     def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3,
-                advect_front=False, calve_flag=False,fbmkwargs={}):
+                advect_front=False, calve_flag=False,fbmkwargs={}, Lmax=None):
         """
         Evolves a 1D ice shelf using the shallow shelf approximation.
 
@@ -83,6 +83,7 @@ class ssa1D:
             self.fbm = None
 
         self.t = 0
+        self.Lmax = Lmax
 
 
     def init_function_space(self,mesh,order):
@@ -265,6 +266,8 @@ class ssa1D:
                 # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
                 self.calve(xc)
+            if self.Lmax is not None and self.Lx > self.Lmax:
+                self.calve(self.Lmax, no_notify=True)
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
@@ -301,7 +304,8 @@ class ssa1D:
         self.H,self.U=dq.split(deepcopy = True)
 
     def advect_mesh(self, U, dt):
-        """Advectt he mesh with the velocity field U over timestep U.
+        """Advect the mesh with the velocity field U over timestep dt.
+        First-order Euler forward step.
         """
         # First, create the new boundary by moving the calving front only.
         boundary = BoundaryMesh(self.mesh, "exterior")
@@ -338,7 +342,7 @@ class ssa1D:
                             self.U.vector().get_local()])
 
 
-    def calve(self, xc):
+    def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
         """
         assert xc < self.Lx
@@ -371,7 +375,9 @@ class ssa1D:
         del self.mesh
         self.mesh = new_mesh
 
-        for obs in self.obslist: obs.notify_calve(self.Lx, xc, self.t)
+        if not no_notify:
+            for obs in self.obslist: 
+                obs.notify_calve(self.Lx, xc, self.t)
 
         self.Lx = xc
 
@@ -420,9 +426,12 @@ class FBMTracer(object):
             sheet)
         dist : a function that returns a random threshold
         compState(x, ssaModel) : a function that computes the path-independent state 
-            variable from the ssaModel at locations x.
+            variable from the ssaModel at locations x, default None. If both
+            compState and stepState are None, compState is defined as
+            strain_thresh.
         stepState(x, ssaModel) : a function that computes a discrete
-            time-derivative of the state variable, for integrating.
+            time-derivative of the state variable, for integrating, default
+            None
         xsep : the separation of particles when added to the system
 
         Data
@@ -585,7 +594,7 @@ def strain_ddt(x, ssaModel):
     strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
     return strainFunc(x)
 
-def compute_shear(ssaModel):
+def compute_stress(ssaModel):
     def epsilon(u):
         return 0.5*(nabla_grad(u)+nabla_grad(u).T)
 
@@ -604,9 +613,9 @@ def compute_shear(ssaModel):
 
     return tau11
 
-def strain_ddt_criticalstress(stress_c, stressFunc=compute_shear):
+def strain_ddt_criticalstress(stress_c, stressFunc=compute_stress):
     def strain_ddt(x, ssaModel):
-        stress = stressFunc(ssaModel)
+        stress = stressFunc(ssaModel)(x)
         strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
         return strainFunc(x)*(stress>stress_c)
     return strain_ddt
