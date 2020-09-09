@@ -10,8 +10,8 @@ import pylab as plt
 import numerics
 reload(numerics)
 from numerics import *
-import fbmtracer
-from fbmtracer import *
+import fbmarraytracer
+from fbmarraytracer import *
 
 time_factor = 86400.0*365.24
 parameters['allow_extrapolation'] = True
@@ -61,8 +61,6 @@ class ssa1D:
 
         self.C = (self.rho_i*self.g*(self.rho_w-self.rho_i)/4/self.B/self.rho_w)**(self.n)
         # Setup evenly spaced grid (This need to change for 2D solution)
-        #self.Nx=Nx; self.Lx=Lx
-        #mesh = IntervalMesh(Nx, 0.0, Lx)
         self.Nx = len(mesh.coordinates())-1
         self.Lx = np.max(mesh.coordinates())
         self.mesh = Mesh(mesh)
@@ -74,8 +72,7 @@ class ssa1D:
         self.ncell, self.hcell, self.v, self.v_vec, \
         self.phi, self.phi_vec = self.init_function_space(self.mesh,order)
 
-        #self.obslist = [UniformCalvingFrontObserver(self, 100000, 0.01)]
-        self.obslist = [CalveObserver(self)]
+        self.obslist = [FrontObserver(self)]
         self.advect_front = advect_front
         self.calve_flag = calve_flag 
 
@@ -421,6 +418,9 @@ class FrontObserver(object):
 
     def notify_calve(self, Lx, xc, t):
         pass
+    @property
+    def data(self):
+        return np.vstack([self.ts, self.xc])
 
 class CalveObserver(object):
     def __init__(self, ssaModel):
@@ -485,7 +485,8 @@ if __name__ == '__main__':
                    'N0':100,
                    'xsep':200,
                    'dist':retconst(2.8),
-                'stepState':strain_ddt}
+                'stepState':strain_ddt,
+                'Nf':100}
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
                             calve_flag=True,fbmkwargs=fbmkwargs) 
     
@@ -565,7 +566,39 @@ if __name__ == '__main__':
         plt.xlabel('Time (s)')
         plt.ylabel('Ice Front Position (m)')
         plt.show()
-
+    if 'fbmtest' in sys.argv:
+        Nx = 2**8    # Number of points in the x-direction
+        Lx = 200e3/1 # Length of domain in the x-direction
+        
+        # Setup ice shelf parameters
+        accum = 0.3/time_factor # m/s
+        H0 = 500.0          # Ice thickness at the grounding line (m)
+        U0 = 50/time_factor # Velocity of ice at the grounding line (m/a)
+        
+        # Initialize model
+        mesh = IntervalMesh(Nx, 0.0, Lx)
+        
+        
+        fbmkwargs={'Lx':Lx,
+                       'N0':100,
+                       'xsep':200,
+                       'dist':uni_dist(0,.10),
+                    'compState':strain_thresh,
+                    'Nf':100.}
+        ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
+                                calve_flag=True,fbmkwargs=fbmkwargs) 
+        
+        #ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
+        del mesh
+        x,H,U = ssaModel.steady_state(accum)
+        H,U=ssaModel.init_shelf(accum)
+        ssaModel.H, ssaModel.U = H, U
+        hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=864000.,Nt=10000,
+                                          accum=Constant(1*accum))
+        plt.plot(*ssaModel.obslist[0].data)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Ice Front Position (m)')
+        plt.show()
     # Mesh-refinement convergence test for time-stepping
     if 'dxconv' in sys.argv: 
         for fac in [9,10,11,12,13]:

@@ -7,11 +7,12 @@ Provides the tracer particle class that contains fiber bundles for calving the
 ssa1d class, along with a collection of random strength distributions and state
 variable functions.
 """
-
+from __future__ import division
 import numpy as np
 
+
 class FBMTracer(object):
-    def __init__(self, Lx, N0, Nf, **kwargs):
+    def __init__(self, Lx, N0, Nf=10, dist=None, compState=None, stepState=None, xsep=1e16, **kwargs):
         """
         A container for tracer particles in a 1D fenics ice dynamics model.
 
@@ -57,13 +58,20 @@ class FBMTracer(object):
         """
         # Properties of tracers
         self.x = np.linspace(0,Lx,N0,endpoint=False)
-        self.N = N0
+        self.N = int(N0)
+        self.xsep = xsep
+        assert compState is None or stepState is None, 'Cannot specify both'
+        self.compState = compState
+        self.stepState = stepState
+        if compState is None and stepState is None:
+            self.compState = strain_thresh
 
-        # Fiber bundles
+        # Fiber bundles 
+        self.dist = dist or retconst(1.)
         # Number of fibers per bundle
-        self.Nf = Nf
+        self.Nf = int(Nf)
         # Construct the fibers - random thresholds
-        self.xcs = np.random.rand(self.N, self.Nf)
+        self.xcs = self.dist((self.N, self.Nf))
         # Force on each fiber bundle
         self.F = np.zeros(self.N)
         # Broken status of each fiber in each tracer
@@ -105,6 +113,7 @@ class FBMTracer(object):
         return 1-np.sum(self.ss,axis=1)/self.Nf
 
     def force(self, F):
+        print('Forcing with {}'.format(F))
         self.F = F
         # Find tracers with broken fibers 
         for i in self.active_tracers: 
@@ -112,8 +121,6 @@ class FBMTracer(object):
                 j = np.argwhere(self.exceeded_threshold[i]*self.ss[i])[0][0]
                 print('Breaking {} {}'.format(i,j))
                 self.ss[i, j] = False
-            if not any(self.ss[i]):
-                print('Calve tracer {}'.format(i))
     def add_tracer(self, xp, state=0):
         """
         Introduce a new particle at location xp with threshold drawn from
@@ -125,7 +132,7 @@ class FBMTracer(object):
                 index = i
                 break
         self.x.insert(i,xp)
-        self.xcs.insert(i, np.random.rand(self.Nf))
+        self.xcs.insert(i, self.dist(self.Nf))
         self.F.insert(i,state)
         self.ss.insert(i,np.ones(self.Nf,dtype=bool))
         self.N += 1
@@ -155,14 +162,14 @@ class FBMTracer(object):
         # If integrated state variable, increment it.
         if self.stepState is not None:
             dstate_dt = np.array([self.stepState(x, ssaModel) for x in self.x])
-            F += self.F + dstate_dt*dt
+            F = self.F + dstate_dt*dt
         else:
-            F = self.compState(x, ssaModel)
+            F = np.array([self.compState(x, ssaModel) for x in self.x])
 
         self.force(F)
 
         if self.x[0] > self.xsep:
-            self.add_particle(0)
+            self.add_tracer(0)
 
     def check_calving(self):
         """Check if any FBMs have exceeded their thresholds.
@@ -179,6 +186,7 @@ class FBMTracer(object):
         if i == None:
             assert self.check_calving(), 'No index given, none to break'
             i=np.argwhere(np.sum(self.ss,axis=1)==0)[0][0]
+        print('Calve tracer {}'.format(i))
         xc = self.x[i]
         j = self.N - 1
         while j >= i:
@@ -188,3 +196,80 @@ class FBMTracer(object):
         self._toArr()
                 
         return xc
+
+
+#### SOME THRESHOLD DISTRIBUTION GENERATORS ####
+def retconst(const):
+    """Returns the constant const
+    """
+    def f(s=None):
+        if s is None:
+            return const
+        else:
+            return np.ones(s)*const
+    return f
+
+def uni_dist(lo,hi):
+    """Uniform distribution between lo and hi
+    """
+    def f(s=None):
+        if s is None:
+            return lo + (hi-lo)*np.random.rand()
+        elif len(np.atleast_1d(s))==1: 
+            return lo + (hi-lo)*np.random.rand(s)
+        else:
+            return lo + (hi-lo)*np.random.rand(*s)
+    return f
+
+def weib_dist(l,a):
+    """Weibull distribution with factor l and shape a
+    """
+    def f():
+        return np.random.weibull(a)*l
+    return f
+
+def norm_dist(mu,sig):
+    def f():
+        return (np.random.randn()+mu)*sig
+    return f
+
+#### SOME STATE VARIABLE FUNCTIONS ####
+def strain_thresh(x, ssaModel):
+    """
+    Compute strain from grounding line.
+    """
+    # Interpolate to locations x
+    U = ssaModel.U(x)
+    # Analytical form for strain in 1D
+    strains = np.log(U/ssaModel.U0)
+    return strains
+
+def strain_ddt(x, ssaModel):
+    strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
+    return strainFunc(x)
+
+def compute_stress(ssaModel):
+    def epsilon(u):
+        return 0.5*(nabla_grad(u)+nabla_grad(u).T)
+
+    def sigma(u):
+        return (2*nabla_grad(u))
+
+    def epsII(u):
+        eps = epsilon(u)
+        epsII_UFL = sqrt(eps**2 + Constant(1e-16)**2)
+        return epsII_UFL
+
+    def eta(u):
+        return Constant(ssaModel.B)*epsII(u)**(1./3-1.0)
+
+    tau11 = project(eta(ssaModel.U)*grad(ssaModel.U)[0,0], ssaModel.Q_cg)
+
+    return tau11
+
+def strain_ddt_criticalstress(stress_c, stressFunc=compute_stress):
+    def strain_ddt(x, ssaModel):
+        stress = stressFunc(ssaModel)(x)
+        strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
+        return strainFunc(x)*(stress>stress_c)
+    return strain_ddt

@@ -7,9 +7,11 @@ Provides the tracer particle class that contains fiber bundles for calving the
 ssa1d class, along with a collection of random strength distributions and state
 variable functions.
 """
+import numpy as np
 
 class FBMTracer(object):
-    def __init__(self, Lx, N0, dist=None, compState=None, stepState=None, xsep=1e16):
+    def __init__(self, Lx, N0, dist=None, compState=None, stepState=None,
+        xsep=1e16, **kwargs):
         """
         A container for tracer particles in a 1D fenics ice dynamics model.
 
@@ -81,6 +83,8 @@ class FBMTracer(object):
         if self.stepState is not None:
             state_dt = np.array([self.stepState(x, ssaModel) for x in self.x])
             self.state += state_dt*dt
+        else:
+            self.state = np.array([self.compState(x, ssaModel) for x in self.x])
 
         if self.x[0] > self.xsep:
             self.add_particle(0)
@@ -127,12 +131,12 @@ class FBMTracer(object):
     def check_calving(self):
         """Check if any FBMs have exceeded their thresholds.
         """
-        if self.compState is not None:
-            state = self.compState(self.x, ssaModel)
-        else:
-            state = self.state
+        #if self.compState is not None:
+        #    state = self.compState(self.x, ssaModel)
+        #else:
+        #    state = self.state
         
-        broken = np.argwhere(self.s < state)
+        broken = np.argwhere(self.s < self.state)
         if len(broken) > 0:
             # Temporarily save the lowest broken index, 
             # will be deleted after calving.
@@ -189,7 +193,7 @@ def strain_thresh(x, ssaModel):
     Compute strain from grounding line.
     """
     # Interpolate to locations x
-    U = np.array([ssaModel.U(i) for i in x])
+    U = ssaModel.U(x)
     # Analytical form for strain in 1D
     strains = np.log(U/ssaModel.U0)
     return strains
