@@ -10,15 +10,18 @@ import pylab as plt
 import numerics
 reload(numerics)
 from numerics import *
-import fbmarraytracer
-from fbmarraytracer import *
+
+from fbmarraytracer import FBMFullTracer
+from fbmtracer import FBMMaxStrengthTracer
+from util import *
 
 time_factor = 86400.0*365.24
 parameters['allow_extrapolation'] = True
 
 class ssa1D:
-    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3,
-                advect_front=False, calve_flag=False,fbmkwargs={}, Lmax=None):
+    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3, B=0.5e8
+                advect_front=False, calve_flag=False, fbm_type=None,
+                fbmkwargs={}, Lmax=None):
         """
         Evolves a 1D ice shelf using the shallow shelf approximation.
 
@@ -31,9 +34,7 @@ class ssa1D:
 
         advect_front = if True, front advects with the front velocity, 
             mesh evolves using Arbitrary Lagrange-Euler (ALE) method.
-        calve_flag = if True,
-
-
+        calve_flag = if True, fiber bundle tracers and max length will calve
 
         We use CG function spaces for velocity and DG function spaces
         for ice thickness and solve the continuity equation simultaneously with
@@ -58,8 +59,8 @@ class ssa1D:
         self.n = 3.0 # flow law exponent
         self.B = 0.5e8 # rate factor of ice--can be adjusted
         # Constant used later
-
         self.C = (self.rho_i*self.g*(self.rho_w-self.rho_i)/4/self.B/self.rho_w)**(self.n)
+
         # Setup evenly spaced grid (This need to change for 2D solution)
         self.Nx = len(mesh.coordinates())-1
         self.Lx = np.max(mesh.coordinates())
@@ -72,18 +73,42 @@ class ssa1D:
         self.ncell, self.hcell, self.v, self.v_vec, \
         self.phi, self.phi_vec = self.init_function_space(self.mesh,order)
 
-        self.obslist = [FrontObserver(self)]
+        self.obslist = []
         self.advect_front = advect_front
-        self.calve_flag = calve_flag 
+        self.frontobs = FrontObserver(self)
+        self.obslist.append(self.frontobs)
 
-        if fbmkwargs:
-            self.fbm = FBMTracer(**fbmkwargs)
+        self.calve_flag = calve_flag 
+        if calve_flag:
+            self.calveobs = CalveObserver(self)
+            self.obslist.append(self.calveobs)
+
+        if fbm_type == 'max':
+            self.fbm = FBMMaxStrengthTracer(**fbmkwargs)
+            self.fbmobs = FBMObserver(self)
+            self.obslist.append(self.fbmobs)
+        elif fbm_type == 'full':
+            self.fbm = FBMFullTracer(**fbmkwargs)
+            self.obslist.append(self.fbmobs)
         else:
             self.fbm = None
 
         self.t = 0
         self.Lmax = Lmax
 
+    def continuousH(self, H=None):
+        """Convenience function for DG H (stored) to CG H (useful).
+        """
+        H = H or self.H
+        return interpolate(self.H, self.Q_cg)
+
+    @property
+    def data(self):
+        """Convenience function for saving (x, H, U)
+        """
+        return np.vstack([self.mesh.coordinates().squeeze()[::-1],
+                            self.continuousH().vector().get_local(),
+                            self.U.vector().get_local()])
 
     def init_function_space(self,mesh,order):
         # vector CG element for velocity
@@ -326,21 +351,6 @@ class ssa1D:
         # Rebuild the mesh box.
         self.mesh.bounding_box_tree().build(self.mesh)
 
-    def continuousH(self, H=None):
-        """Convenience function for DG H (stored) to CG H (useful).
-        """
-        H = H or self.H
-        return interpolate(self.H, self.Q_cg)
-
-    @property
-    def data(self):
-        """Convenience function for saving (x, H, U)
-        """
-        return np.vstack([self.mesh.coordinates().squeeze()[::-1],
-                            self.continuousH().vector().get_local(),
-                            self.U.vector().get_local()])
-
-
     def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
         """
@@ -403,6 +413,27 @@ class ssa1D:
         plt.show()
 
 
+### PLOT FUNCTIONS ####
+
+def plot_profiles(H, hnew, U, unew):
+    fig=plt.figure(2)
+    fig.clf()
+    plt.subplot(2,1,1)
+    plot(unew[0]*time_factor,color='k',label='numeric')
+    plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
+    plt.xlabel('Distance (m)')
+    plt.ylabel('Velocity (m/a)')
+    plt.subplot(2,1,2)
+    
+    plot(hnew,color='k',label='numerical solution')
+    plot(H,color='r',linestyle='--',label='analytic')
+    plt.legend()
+    plt.xlabel('Distance (m)')
+    plt.ylabel('Ice shelf elevation (m.a.s.l.)')
+    plt.plot()
+    plt.tight_layout()
+    plt.show()
+    return plt.gca()
 
 
 #### OBSERVER CLASS FOR RECORDING SIMULATION ####
@@ -438,27 +469,26 @@ class CalveObserver(object):
     def data(self):
         return np.vstack([self.ts, self.xs])
 
+class FBMObserver(object):
+    def __init__(self, ssaModel):
+        self.ts = [0]
+        self.xs = [ssaModel.fbm.x]
+        self.rs = [ssaModel.fbm.data[1]]
 
-### PLOT FUNCTIONS ####
+    def notify_step(self, ssaModel, dt):
+        t = self.ts[-1]+dt
+        if t/dt % 100:
+            x, r = ssaModel.fbm.data
+            self.ts.append(t)
+            self.xs.append(x)
+            self.rs.append(rs)
 
-def plot_profiles(H, hnew, U, unew):
-    fig=plt.figure(2)
-    fig.clf()
-    plt.subplot(2,1,1)
-    plot(unew[0]*time_factor,color='k',label='numeric')
-    plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
-    plt.xlabel('Distance (m)')
-    plt.ylabel('Velocity (m/a)')
-    plt.subplot(2,1,2)
-    
-    plot(hnew,color='k',label='numerical solution')
-    plot(H,color='r',linestyle='--',label='analytic')
-    plt.legend()
-    plt.xlabel('Distance (m)')
-    plt.ylabel('Ice shelf elevation (m.a.s.l.)')
-    plt.plot()
-    plt.tight_layout()
-    plt.show()
+    def notify_calve(self, Lx, xc, t):
+        pass
+
+    @property
+    def data(self):
+        return self.ts, self.xs, self.rs
 
 if __name__ == '__main__':
     import sys, pickle
@@ -524,29 +554,9 @@ if __name__ == '__main__':
     	hnew,unew = ssaModel.integrate(H,U,dt=86400.*100,Nt=10,accum=Constant(accum))
     	H,U=ssaModel.init_shelf(accum)
     	
-    	#fig=plt.figure(2)
-    	#fig.clf()
-    	#plt.subplot(2,1,1)
-    	#plot(unew[0]*time_factor,color='k',label='numeric')
-    	#plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
-    	#plt.xlabel('Distance (m)')
-    	#plt.ylabel('Velocity (m/a)')
-    	#plt.subplot(2,1,2)
-    	#
-    	#plot(hnew,color='k',label='numerical solution')
-    	#plot(H,color='r',linestyle='--',label='analytic')
-    	#plt.legend()
-    	#plt.xlabel('Distance (m)')
-    	#plt.ylabel('Ice shelf elevation (m.a.s.l.)')
-    	#plt.plot()
-    	#plt.show()
-
+        #plot_profiles(H,hnew,U,unew)
         print('Test complete')
 
-    #H,U = ssaModel.integrate(H,U,dt=864000.,Nt=50000,accum=Constant(1*accum)) 
-    #import pickle
-    #pickle.dump(ssaModel.obslist[0].data,
-    #            open('./frontev_xsep2000_const_2p8_dt_864000_Nt_50000', 'w'))
     
     # Calving check: advect a few timesteps, calve back to x=200000, 10 times
     if 'calvecheck' in sys.argv:

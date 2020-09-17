@@ -8,8 +8,9 @@ ssa1d class, along with a collection of random strength distributions and state
 variable functions.
 """
 import numpy as np
+from util import *
 
-class FBMTracer(object):
+class FBMMaxStrengthTracer(object):
     def __init__(self, Lx, N0, dist=None, compState=None, stepState=None,
         xsep=1e16, **kwargs):
         """
@@ -69,6 +70,11 @@ class FBMTracer(object):
         self.xsep = xsep
 
         self.listform = True
+
+    @property
+    def data(self):
+        self._toArr()
+        return np.vstack([self.x, self.state/self.s])
 
     def advect_particles(self, ssaModel, dt):
         """
@@ -159,71 +165,3 @@ class FBMTracer(object):
         return xc
 
 
-#### SOME THRESHOLD DISTRIBUTION GENERATORS ####
-def retconst(const):
-    """Returns the constant const
-    """
-    def f():
-        return const
-    return f
-
-def uni_dist(lo,hi):
-    """Uniform distribution between lo and hi
-    """
-    def f():
-        return lo + (hi-lo)*np.random.rand()
-    return f
-
-def weib_dist(l,a):
-    """Weibull distribution with factor l and shape a
-    """
-    def f():
-        return np.random.weibull(a)*l
-    return f
-
-def norm_dist(mu,sig):
-    def f():
-        return (np.random.randn()+mu)*sig
-    return f
-
-
-#### SOME STATE VARIABLE FUNCTIONS ####
-def strain_thresh(x, ssaModel):
-    """
-    Compute strain from grounding line.
-    """
-    # Interpolate to locations x
-    U = ssaModel.U(x)
-    # Analytical form for strain in 1D
-    strains = np.log(U/ssaModel.U0)
-    return strains
-
-def strain_ddt(x, ssaModel):
-    strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-    return strainFunc(x)
-
-def compute_stress(ssaModel):
-    def epsilon(u):
-        return 0.5*(nabla_grad(u)+nabla_grad(u).T)
-
-    def sigma(u):
-        return (2*nabla_grad(u))
-
-    def epsII(u):
-        eps = epsilon(u)
-        epsII_UFL = sqrt(eps**2 + Constant(1e-16)**2)
-        return epsII_UFL
-
-    def eta(u):
-        return Constant(ssaModel.B)*epsII(u)**(1./3-1.0)
-
-    tau11 = project(eta(ssaModel.U)*grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-
-    return tau11
-
-def strain_ddt_criticalstress(stress_c, stressFunc=compute_stress):
-    def strain_ddt(x, ssaModel):
-        stress = stressFunc(ssaModel)(x)
-        strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-        return strainFunc(x)*(stress>stress_c)
-    return strain_ddt
