@@ -19,7 +19,7 @@ time_factor = 86400.0*365.24
 parameters['allow_extrapolation'] = True
 
 class ssa1D:
-    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3, B=0.5e8
+    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3, B=0.5e8,
                 advect_front=False, calve_flag=False, fbm_type=None,
                 fbmkwargs={}, Lmax=None):
         """
@@ -89,6 +89,7 @@ class ssa1D:
             self.obslist.append(self.fbmobs)
         elif fbm_type == 'full':
             self.fbm = FBMFullTracer(**fbmkwargs)
+            self.fbmobs = FBMObserver(self)
             self.obslist.append(self.fbmobs)
         else:
             self.fbm = None
@@ -481,7 +482,7 @@ class FBMObserver(object):
             x, r = ssaModel.fbm.data
             self.ts.append(t)
             self.xs.append(x)
-            self.rs.append(rs)
+            self.rs.append(r)
 
     def notify_calve(self, Lx, xc, t):
         pass

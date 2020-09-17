@@ -4,6 +4,8 @@ util.py
 Some shared utility functions.
 """
 
+import numpy as np
+
 #### SOME THRESHOLD DISTRIBUTION GENERATORS ####
 def retconst(const):
     """Generator for the constant const.
@@ -60,6 +62,7 @@ def strict_dist(lo=0,hi=1):
             return np.linspace(lo,hi,s+1)[1:]
         else:
             return np.repeat(np.linspace(lo,hi,s[1]+1)[1:][None,:],s[0],0)
+    return f
 
 #### SOME STATE VARIABLE FUNCTIONS ####
 def strain_thresh(x, ssaModel):

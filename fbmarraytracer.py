@@ -117,13 +117,13 @@ class FBMFullTracer(object):
         return np.vstack([self.x, self.damage])
 
     def force(self, F):
-        print('Forcing with {}'.format(F))
+        #print('Forcing with {}'.format(F))
         self.F = F
         # Find tracers with broken fibers 
         for i in self.active_tracers: 
             while any(self.ss[i]) and any(self.exceeded_threshold[i][self.ss[i]]):
                 j = np.argwhere(self.exceeded_threshold[i]*self.ss[i])[0][0]
-                print('Breaking {} {}'.format(i,j))
+                #print('Breaking {} {}'.format(i,j))
                 self.ss[i, j] = False
     def add_tracer(self, xp, state=0):
         """
@@ -190,7 +190,7 @@ class FBMFullTracer(object):
         if i == None:
             assert self.check_calving(), 'No index given, none to break'
             i=np.argwhere(np.sum(self.ss,axis=1)==0)[0][0]
-        print('Calve tracer {}'.format(i))
+        #print('Calve tracer {}'.format(i))
         xc = self.x[i]
         j = self.N - 1
         while j >= i:
