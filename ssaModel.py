@@ -11,12 +11,17 @@ import numerics
 reload(numerics)
 from numerics import *
 
+from fbmarraytracer import FBMFullTracer
+from fbmtracer import FBMMaxStrengthTracer
+from util import *
+
 time_factor = 86400.0*365.24
 parameters['allow_extrapolation'] = True
 
 class ssa1D:
-    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3,
-                advect_front=False, calve_flag=False,fbmkwargs={}):
+    def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3, B=0.5e8,
+                advect_front=False, calve_flag=False, fbm_type=None,
+                fbmkwargs={}, Lmax=None):
         """
         Evolves a 1D ice shelf using the shallow shelf approximation.
 
@@ -29,9 +34,7 @@ class ssa1D:
 
         advect_front = if True, front advects with the front velocity, 
             mesh evolves using Arbitrary Lagrange-Euler (ALE) method.
-        calve_flag = if True,
-
-
+        calve_flag = if True, fiber bundle tracers and max length will calve
 
         We use CG function spaces for velocity and DG function spaces
         for ice thickness and solve the continuity equation simultaneously with
@@ -56,11 +59,11 @@ class ssa1D:
         self.n = 3.0 # flow law exponent
         self.B = 0.5e8 # rate factor of ice--can be adjusted
         # Constant used later
-
         self.C = (self.rho_i*self.g*(self.rho_w-self.rho_i)/4/self.B/self.rho_w)**(self.n)
+
         # Setup evenly spaced grid (This need to change for 2D solution)
-        self.Nx=Nx; self.Lx=Lx
-        #mesh = IntervalMesh(Nx, 0.0, Lx)
+        self.Nx = len(mesh.coordinates())-1
+        self.Lx = np.max(mesh.coordinates())
         self.mesh = Mesh(mesh)
         
         self.order = order
@@ -70,18 +73,43 @@ class ssa1D:
         self.ncell, self.hcell, self.v, self.v_vec, \
         self.phi, self.phi_vec = self.init_function_space(self.mesh,order)
 
-        #self.obslist = [UniformCalvingFrontObserver(self, 100000, 0.01)]
-        self.obslist = [CalveObserver(self)]
+        self.obslist = []
         self.advect_front = advect_front
-        self.calve_flag = calve_flag 
+        self.frontobs = FrontObserver(self)
+        self.obslist.append(self.frontobs)
 
-        if fbmkwargs:
-            self.fbm = FBMTracer(**fbmkwargs)
+        self.calve_flag = calve_flag 
+        if calve_flag:
+            self.calveobs = CalveObserver(self)
+            self.obslist.append(self.calveobs)
+
+        if fbm_type == 'max':
+            self.fbm = FBMMaxStrengthTracer(**fbmkwargs)
+            self.fbmobs = FBMObserver(self)
+            self.obslist.append(self.fbmobs)
+        elif fbm_type == 'full':
+            self.fbm = FBMFullTracer(**fbmkwargs)
+            self.fbmobs = FBMObserver(self)
+            self.obslist.append(self.fbmobs)
         else:
             self.fbm = None
 
         self.t = 0
+        self.Lmax = Lmax
 
+    def continuousH(self, H=None):
+        """Convenience function for DG H (stored) to CG H (useful).
+        """
+        H = H or self.H
+        return interpolate(self.H, self.Q_cg)
+
+    @property
+    def data(self):
+        """Convenience function for saving (x, H, U)
+        """
+        return np.vstack([self.mesh.coordinates().squeeze()[::-1],
+                            self.continuousH().vector().get_local(),
+                            self.U.vector().get_local()])
 
     def init_function_space(self,mesh,order):
         # vector CG element for velocity
@@ -259,10 +287,12 @@ class ssa1D:
             self.t += dt
 
             # Check if calving-criterion is met anywhere
-            if self.calve_flag and self.fbm.check_calving(self):
+            if self.calve_flag and self.fbm.check_calving():
                 # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
                 self.calve(xc)
+            if self.Lmax is not None and self.Lx > self.Lmax:
+                self.calve(self.Lmax, no_notify=True)
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
@@ -299,7 +329,8 @@ class ssa1D:
         self.H,self.U=dq.split(deepcopy = True)
 
     def advect_mesh(self, U, dt):
-        """Advectt he mesh with the velocity field U over timestep U.
+        """Advect the mesh with the velocity field U over timestep dt.
+        First-order Euler forward step.
         """
         # First, create the new boundary by moving the calving front only.
         boundary = BoundaryMesh(self.mesh, "exterior")
@@ -321,22 +352,7 @@ class ssa1D:
         # Rebuild the mesh box.
         self.mesh.bounding_box_tree().build(self.mesh)
 
-    def continuousH(self, H=None):
-        """Convenience function for DG H (stored) to CG H (useful).
-        """
-        H = H or self.H
-        return interpolate(self.H, self.Q_cg)
-
-    @property
-    def data(self):
-        """Convenience function for saving (x, H, U)
-        """
-        return np.vstack([self.mesh.coordinates().squeeze()[::-1],
-                            self.continuousH().vector().get_local(),
-                            self.U.vector().get_local()])
-
-
-    def calve(self, xc):
+    def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
         """
         assert xc < self.Lx
@@ -369,7 +385,9 @@ class ssa1D:
         del self.mesh
         self.mesh = new_mesh
 
-        for obs in self.obslist: obs.notify_calve(self.Lx, xc, self.t)
+        if not no_notify:
+            for obs in self.obslist: 
+                obs.notify_calve(self.Lx, xc, self.t)
 
         self.Lx = xc
 
@@ -396,251 +414,6 @@ class ssa1D:
         plt.show()
 
 
-class FBMTracer(object):
-    def __init__(self, Lx, N0, dist=None, compState=None, stepState=None, xsep=1e16):
-        """
-        A container for tracer particles in a 1D fenics ice dynamics model.
-
-        The tracers advect with the fluid velocity, but do not affect the flow
-        until the fiber bundle models they carry break, at which point calving
-        is triggered in the ice flow model.
-        There are two kinds of state variables: those that are integrated
-        through the simulation, and those that only depend on the instantaneous
-        configuration of the ice. For the former, provide a function,
-        stepState, that is used to intergate the state variable when the
-        particles advect. For the latter, provide a function that computes the
-        state variable when checking for calving. Only one may be specified.
-
-        Parameters
-        ----------
-        Lx : the length of the system
-        N0 : the initial number of particles (spread evenly through the ice
-            sheet)
-        dist : a function that returns a random threshold
-        compState(x, ssaModel) : a function that computes the path-independent state 
-            variable from the ssaModel at locations x.
-        stepState(x, ssaModel) : a function that computes a discrete
-            time-derivative of the state variable, for integrating.
-        xsep : the separation of particles when added to the system
-
-        Data
-        ----
-        N : number of particles
-        x : location of particles
-        s : threshold of particles
-        state : the state of each particle
-
-        Methods
-        -------
-        advect_particles
-        add_particle
-        remove_particle
-        check_calving
-        calve
-        """
-        self.x = list(np.linspace(0,Lx,N0,endpoint=False))
-        self.N = N0
-        self.dist = dist or retconst(1.)
-        assert compState is None or stepState is None, 'Cannot specify both'
-        self.compState = compState
-        self.stepState = stepState
-        if compState is None and stepState is None:
-            self.compState = strain_thresh
-        # Now create the initial thresholds
-        self.s = [self.dist() for i in range(N0)]
-        self.state = list(np.zeros(N0))
-        self.xsep = xsep
-
-        self.listform = True
-
-    def advect_particles(self, ssaModel, dt):
-        """
-        Advect particles with the flow represented by vector coefficients
-        Ufunc. Drop in a new particle if required.
-        """
-        self._toArr()
-        # interpolate ice-velocities to particle positions
-        U = np.array([ssaModel.U(x) for x in self.x])
-        self.x += U*dt
-        # If integrated state variable, interpolate to positions
-        if self.stepState is not None:
-            state_dt = np.array([self.stepState(x, ssaModel) for x in self.x])
-            self.state += state_dt*dt
-
-        if self.x[0] > self.xsep:
-            self.add_particle(0)
-
-    def add_particle(self, xp, state=0):
-        """
-        Introduce a new particle at location xp with threshold drawn from
-        self.dist.
-        """
-        self._toList()
-        for i in range(self.N):
-            if self.x[i] > xp:
-                index = i
-                break
-        self.x.insert(i,xp)
-        self.s.insert(i,self.dist())
-        self.state.insert(i,state)
-        self.N += 1
-
-    def _toList(self):
-        if self.listform: return
-        self.x = self.x.tolist()
-        self.s = self.s.tolist()
-        self.state = self.state.tolist()
-        self.listform = True
-
-    def _toArr(self):
-        if not self.listform: return
-        self.x = np.asarray(self.x)
-        self.s = np.asarray(self.s)
-        self.state = np.asarray(self.state)
-        self.listform = False
-
-    def remove_particle(self, i):
-        """
-        Revmoce ith particle from the flow, used in calving.
-        """
-        self.toList()
-        self.x.pop(i)
-        self.s.pop(i)
-        self.state.pop(i)
-        self.N -= 1
-
-    def check_calving(self, ssaModel):
-        """Check if any FBMs have exceeded their thresholds.
-        """
-        if self.compState is not None:
-            state = self.compState(self.x, ssaModel)
-        else:
-            state = self.state
-        
-        broken = np.argwhere(self.s < state)
-        if len(broken) > 0:
-            # Temporarily save the lowest broken index, 
-            # will be deleted after calving.
-            self._minbroken = np.min(broken)
-            return True
-        else:
-            return False
-
-    def calve(self, i=None):
-        """Remove broken FBMs and FBMs connected to the front.
-        """
-        self._toList()
-        i = i or self._minbroken
-        del self._minbroken
-        xc = self.x[i]
-        j = self.N - 1
-        while j >= i:
-            self.remove_particle(j)
-            j-=1
-        return xc
-
-
-#### SOME THRESHOLD DISTRIBUTION GENERATORS ####
-def retconst(const):
-    """Returns the constant const
-    """
-    def f():
-        return const
-    return f
-
-def uni_dist(lo,hi):
-    """Uniform distribution between lo and hi
-    """
-    def f():
-        return lo + (hi-lo)*np.random.rand()
-    return f
-
-def weib_dist(l,a):
-    """Weibull distribution with factor l and shape a
-    """
-    def f():
-        return np.random.weibull(a)*l
-    return f
-
-def norm_dist(mu,sig):
-    def f():
-        return (np.random.randn()+mu)*sig
-    return f
-
-
-#### SOME STATE VARIABLE FUNCTIONS ####
-def strain_thresh(x, ssaModel):
-    """
-    Compute strain from grounding line.
-    """
-    # Interpolate to locations x
-    U = np.array([ssaModel.U(i) for i in x])
-    # Analytical form for strain in 1D
-    strains = np.log(U/ssaModel.U0)
-    return strains
-
-def strain_ddt(x, ssaModel):
-    strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-    return strainFunc(x)
-
-def compute_shear(ssaModel):
-    def epsilon(u):
-        return 0.5*(nabla_grad(u)+nabla_grad(u).T)
-
-    def sigma(u):
-        return (2*nabla_grad(u))
-
-    def epsII(u):
-        eps = epsilon(u)
-        epsII_UFL = sqrt(eps**2 + Constant(1e-16)**2)
-        return epsII_UFL
-
-    def eta(u):
-        return Constant(ssaModel.B)*epsII(u)**(1./3-1.0)
-
-    tau11 = project(eta(ssaModel.U)*grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-
-    return tau11
-
-def strain_ddt_criticalstress(stress_c, stressFunc=compute_shear):
-    def strain_ddt(x, ssaModel):
-        stress = stressFunc(ssaModel)
-        strainFunc = project(grad(ssaModel.U)[0,0], ssaModel.Q_cg)
-        return strainFunc(x)*(stress>stress_c)
-    return strain_ddt
-
-
-#### OBSERVER CLASS FOR RECORDING SIMULATION ####
-
-class FrontObserver(object):
-    def __init__(self, ssaModel):
-        self.xc = [ssaModel.Lx]
-        self.ts = [0]
-
-    def notify_step(self, ssaModel, dt):
-        self.xc.append(ssaModel.Lx)
-        self.ts.append(self.ts[-1]+dt)
-
-    def notify_calve(self, Lx, xc, t):
-        pass
-
-class CalveObserver(object):
-    def __init__(self, ssaModel):
-        self.ts = [0]
-        self.xs = [ssaModel.Lx]
-
-    def notify_step(self, ssaModel, dt):
-        pass
-
-    def notify_calve(self, Lx, xc, t):
-        self.ts += [t, t]
-        self.xs += [Lx, xc]
-
-    @property
-    def data(self):
-        return np.vstack([self.ts, self.xs])
-
-
 ### PLOT FUNCTIONS ####
 
 def plot_profiles(H, hnew, U, unew):
@@ -661,6 +434,62 @@ def plot_profiles(H, hnew, U, unew):
     plt.plot()
     plt.tight_layout()
     plt.show()
+    return plt.gca()
+
+
+#### OBSERVER CLASS FOR RECORDING SIMULATION ####
+
+class FrontObserver(object):
+    def __init__(self, ssaModel):
+        self.xc = [ssaModel.Lx]
+        self.ts = [0]
+
+    def notify_step(self, ssaModel, dt):
+        self.xc.append(ssaModel.Lx)
+        self.ts.append(self.ts[-1]+dt)
+
+    def notify_calve(self, Lx, xc, t):
+        pass
+    @property
+    def data(self):
+        return np.vstack([self.ts, self.xc])
+
+class CalveObserver(object):
+    def __init__(self, ssaModel):
+        self.ts = [0]
+        self.xs = [ssaModel.Lx]
+
+    def notify_step(self, ssaModel, dt):
+        pass
+
+    def notify_calve(self, Lx, xc, t):
+        self.ts += [t, t]
+        self.xs += [Lx, xc]
+
+    @property
+    def data(self):
+        return np.vstack([self.ts, self.xs])
+
+class FBMObserver(object):
+    def __init__(self, ssaModel):
+        self.ts = [0]
+        self.xs = [ssaModel.fbm.x]
+        self.rs = [ssaModel.fbm.data[1]]
+
+    def notify_step(self, ssaModel, dt):
+        t = self.ts[-1]+dt
+        if t/dt % 100:
+            x, r = ssaModel.fbm.data
+            self.ts.append(t)
+            self.xs.append(x)
+            self.rs.append(r)
+
+    def notify_calve(self, Lx, xc, t):
+        pass
+
+    @property
+    def data(self):
+        return self.ts, self.xs, self.rs
 
 if __name__ == '__main__':
     import sys, pickle
@@ -687,7 +516,8 @@ if __name__ == '__main__':
                    'N0':100,
                    'xsep':200,
                    'dist':retconst(2.8),
-                'stepState':strain_ddt}
+                'stepState':strain_ddt,
+                'Nf':100}
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
                             calve_flag=True,fbmkwargs=fbmkwargs) 
     
@@ -725,29 +555,9 @@ if __name__ == '__main__':
     	hnew,unew = ssaModel.integrate(H,U,dt=86400.*100,Nt=10,accum=Constant(accum))
     	H,U=ssaModel.init_shelf(accum)
     	
-    	#fig=plt.figure(2)
-    	#fig.clf()
-    	#plt.subplot(2,1,1)
-    	#plot(unew[0]*time_factor,color='k',label='numeric')
-    	#plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
-    	#plt.xlabel('Distance (m)')
-    	#plt.ylabel('Velocity (m/a)')
-    	#plt.subplot(2,1,2)
-    	#
-    	#plot(hnew,color='k',label='numerical solution')
-    	#plot(H,color='r',linestyle='--',label='analytic')
-    	#plt.legend()
-    	#plt.xlabel('Distance (m)')
-    	#plt.ylabel('Ice shelf elevation (m.a.s.l.)')
-    	#plt.plot()
-    	#plt.show()
-
+        #plot_profiles(H,hnew,U,unew)
         print('Test complete')
 
-    #H,U = ssaModel.integrate(H,U,dt=864000.,Nt=50000,accum=Constant(1*accum)) 
-    #import pickle
-    #pickle.dump(ssaModel.obslist[0].data,
-    #            open('./frontev_xsep2000_const_2p8_dt_864000_Nt_50000', 'w'))
     
     # Calving check: advect a few timesteps, calve back to x=200000, 10 times
     if 'calvecheck' in sys.argv:
@@ -765,9 +575,41 @@ if __name__ == '__main__':
 
         plt.plot(*ssaModel.obslist[0].data)
         plt.xlabel('Time (s)')
-        ply.ylabel('Ice Front Position (m)')
+        plt.ylabel('Ice Front Position (m)')
         plt.show()
-
+    if 'fbmtest' in sys.argv:
+        Nx = 2**8    # Number of points in the x-direction
+        Lx = 200e3/1 # Length of domain in the x-direction
+        
+        # Setup ice shelf parameters
+        accum = 0.3/time_factor # m/s
+        H0 = 500.0          # Ice thickness at the grounding line (m)
+        U0 = 50/time_factor # Velocity of ice at the grounding line (m/a)
+        
+        # Initialize model
+        mesh = IntervalMesh(Nx, 0.0, Lx)
+        
+        
+        fbmkwargs={'Lx':Lx,
+                       'N0':100,
+                       'xsep':200,
+                       'dist':uni_dist(0,.10),
+                    'compState':strain_thresh,
+                    'Nf':100.}
+        ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
+                                calve_flag=True,fbmkwargs=fbmkwargs) 
+        
+        #ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
+        del mesh
+        x,H,U = ssaModel.steady_state(accum)
+        H,U=ssaModel.init_shelf(accum)
+        ssaModel.H, ssaModel.U = H, U
+        hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=864000.,Nt=10000,
+                                          accum=Constant(1*accum))
+        plt.plot(*ssaModel.obslist[0].data)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Ice Front Position (m)')
+        plt.show()
     # Mesh-refinement convergence test for time-stepping
     if 'dxconv' in sys.argv: 
         for fac in [9,10,11,12,13]:
