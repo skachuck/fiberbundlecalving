@@ -27,20 +27,20 @@ fbmkwargs={'Lx':Lx,
 positionsave = []
 timesave = []
 
-for i in range(1,6):
+for i in range(1,3):
     Nx = 160*i
     mesh = IntervalMesh(Nx, 0.0, Lx)
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,
-    calve_flag=True,fbmkwargs=fbmkwargs) ;
+    calve_flag=True,fbm_type='max',fbmkwargs=fbmkwargs) ;
     del mesh
     x,H,U = ssaModel.steady_state(accum)
     H,U=ssaModel.init_shelf(accum)
     H,U = ssaModel.integrate(H,U,dt=DT,Nt=100,accum=Constant(accum))
-    position = ssaModel.obslist[0].xs
+    position = ssaModel.obslist[0].xc
     time = ssaModel.obslist[0].ts
     positionsave.append(position)
     timesave.append(time)
-    plt.plot(*ssaModel.obslist[0].data)
+    plt.plot(*ssaModel.fbmobs.data)
     
 plt.xlabel('Time (s)')
 plt.ylabel('Position (m)')
