@@ -8,7 +8,6 @@ Can plot the calving events
 """
 # Import the models
 from ssaModel import *
-import matplotlib.pyplot as plt
 
 # Setup some fenics log stuff to output diagnostic information
 set_log_level(20)
@@ -40,7 +39,8 @@ mesh = IntervalMesh(Nx, 0.0, Lx)
 fbmkwargs={'Lx':Lx,
            'N0':1000,
            'Nf':10,
-           'xsep':200}
+           'xsep':200,
+           'fbm_type':'full'}
 
 # In the large-Nf limit, the maximum stress per fiber of a bundle of fibers 
 # with strictly increasing strengths (with maximum xmax) is Fmax/Nf = xmax^2/4.
@@ -60,8 +60,8 @@ H,U=ssaModel.init_shelf(accum)
 H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=Constant(accum));
 
 plt.plot(*ssaModel.fbmobs.data)
-plt.xlabel('Time (s)')
-plt.ylabel('Distance (km)')
+plt.xlabel('Position of particles (m)')
+plt.ylabel('Damage of particles (dimless)')
 #plt.legend()
 plt.show()
 
