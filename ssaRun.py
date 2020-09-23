@@ -39,7 +39,8 @@ mesh = IntervalMesh(Nx, 0.0, Lx)
 fbmkwargs={'Lx':Lx,
            'N0':1000,
            'Nf':10,
-           'xsep':200}
+           'xsep':200,
+           'fbm_type':'full'}
 
 # In the large-Nf limit, the maximum stress per fiber of a bundle of fibers 
 # with strictly increasing strengths (with maximum xmax) is Fmax/Nf = xmax^2/4.
@@ -57,7 +58,11 @@ H,U=ssaModel.init_shelf(accum)
 
 # Run the model in time
 H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=Constant(accum));
+plt.plot(*ssaModel.fbmobs.data)
+plt.xlabel('Position of particles (m)')
+plt.ylabel('Damage of particles (dimless)')
+plt.show()
 
-# get damage of fibers over time with ssaModel.fbmobs.data
+# get latest damage of fibers with ssaModel.fbmobs.data
 # get front position over time with ssaModel.frontobs.data
 # get calving events with ssaModel.calveobs.data

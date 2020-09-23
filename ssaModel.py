@@ -489,7 +489,7 @@ class FBMObserver(object):
 
     @property
     def data(self):
-        return self.ts, self.xs, self.rs
+        return np.vstack([self.xs[-1], self.rs[-1]])
 
 if __name__ == '__main__':
     import sys, pickle
