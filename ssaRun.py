@@ -26,7 +26,7 @@ H0 = 434.          # Ice thickness at the grounding line (m)
 U0 = 95./time_factor # Velocity of ice at the grounding line (m/a)
 B = (2.54e-17)**(-1./3.)
 
-# Set ice shelf parameters
+# Set ice shel parameters
 accum = 0.5/time_factor
 H0 = 500.
 U0 = 50./time_factor
@@ -51,20 +51,18 @@ fbmkwargs['dist'] = strict_dist(0,0.923)
 #fbmkwargs['dist'] = uni_dist(0,0.923)
 ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,B=B,
                     advect_front=True, calve_flag=True,
-                    fbm_type='full', fbmkwargs=fbmkwargs) ;
+                    fbm_type='full', fbmkwargs=fbmkwargs) ; 
 del mesh
 x,H,U = ssaModel.steady_state(accum)
 H,U=ssaModel.init_shelf(accum)
 
 # Run the model in time
 H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=Constant(accum));
-
 plt.plot(*ssaModel.fbmobs.data)
 plt.xlabel('Position of particles (m)')
 plt.ylabel('Damage of particles (dimless)')
-#plt.legend()
 plt.show()
 
-# get damage of fibers over time with ssaModel.fbmobs.data
+# get latest damage of fibers with ssaModel.fbmobs.data
 # get front position over time with ssaModel.frontobs.data
 # get calving events with ssaModel.calveobs.data
