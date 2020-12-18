@@ -57,7 +57,7 @@ class ssa1D:
         # Acceleration due to gravity
         self.g = 9.81 # acceleration due to gravity m/s^2
         self.n = 3.0 # flow law exponent
-        self.B = 0.5e8 # rate factor of ice--can be adjusted
+        self.B = B # rate factor of ice--can be adjusted
         # Constant used later
         self.C = (self.rho_i*self.g*(self.rho_w-self.rho_i)/4/self.B/self.rho_w)**(self.n)
 
@@ -214,9 +214,7 @@ class ssa1D:
         # Effective acceleration due to gravity
         f = Constant(self.rho_i*self.g*(1-self.rho_i/self.rho_w))
 
-
         b = -self.rho_i/self.rho_w*H
-
 
         # SSA variational form
         Hmid = (H+q)/2
@@ -236,9 +234,7 @@ class ssa1D:
         uv = velocity from previous step
         accum = accumulation rate (m/s)
         """
-
         n = self.ncell
-
 
         # Need to figure out CFL criterion to set maximum time step???
         dtc = Constant(dt)   # Make time step size a constant so we don't have to recompile
@@ -274,10 +270,16 @@ class ssa1D:
         accum = default accumulation
         """
         self.H, self.U = H, U
+        if accum < 0:
+            Lmax = -self.H0*self.U0/accum
+        else:
+            Lmax = 1e20
+
+        accum = Constant(accum)
         for i in xrange(Nt):
             # Advect the front
             if self.advect_front:
-                self.advect_mesh(self.U, dt)
+                self.advect_mesh(self.U, dt, Lmax)
             # Compute the new U and H fields
             self.step(dt,accum)
             # Advect the FBM tracer particles
@@ -292,6 +294,8 @@ class ssa1D:
                 xc = self.fbm.calve()
                 self.calve(xc)
             if self.Lmax is not None and self.Lx > self.Lmax:
+                print('Calving to Lmax')
+                xc = self.fbm.calve(x=self.Lmax)
                 self.calve(self.Lmax, no_notify=True)
 
             for obs in self.obslist: obs.notify_step(self, dt)
@@ -328,10 +332,13 @@ class ssa1D:
         # Store the solutions internally.
         self.H,self.U=dq.split(deepcopy = True)
 
-    def advect_mesh(self, U, dt):
+    def advect_mesh(self, U, dt, Lmax=1e20):
         """Advect the mesh with the velocity field U over timestep dt.
         First-order Euler forward step.
         """
+        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
+        #    return
+
         # First, create the new boundary by moving the calving front only.
         boundary = BoundaryMesh(self.mesh, "exterior")
         for x in boundary.coordinates():
