@@ -24,7 +24,7 @@ NT = 1000
 accum = -2./time_factor # m/s
 H0 = 434.          # Ice thickness at the grounding line (m)
 U0 = 95./time_factor # Velocity of ice at the grounding line (m/a)
-B = (2.54e-17)**(-1./3.)
+B = (2.54e-17/time_factor)**(-1./3.)
 Lx = -H0*U0/accum - 1e-6
 
 # Set ice shel parameters
@@ -49,10 +49,10 @@ fbmkwargs={'Lx':Lx,
 # Accounting for fluctuations due to finite N (Fmax_actual = Fmax + d N**1/3),
 # with d~0.3138 for the strict distribution over [0,1], get xmax=0.923
 #fbmkwargs['dist'] = strict_dist(0,0.923)
-fbmkwargs['dist'] = strict_dist(0,0.93333)
-fbmkwargs['dist'] = uni_dist(0,2.*0.93333/2.8)
+fbmkwargs['dist'] = strict_dist(0,0.179)
+#fbmkwargs['dist'] = uni_dist(0,0.179)
 results = []
-for i in range(10):
+for i in range(1):
     mesh = IntervalMesh(Nx, 0.0, Lx)
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,B=B,
                         advect_front=True, calve_flag=True,
@@ -65,7 +65,7 @@ for i in range(10):
     ssaModel.U = U
     
     # Run the model in time
-    H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=accum);
+    #H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=accum);
     
     results.append(ssaModel.frontobs.data)
 
@@ -74,11 +74,11 @@ for i in range(10):
 #plt.ylabel('Damage of particles (dimless)')
 #plt.show()
 #
-for entry in results:
-    plt.plot(entry[0]/time_factor, entry[1])
-plt.xlabel('Time (yrs)')
-plt.ylabel('Front pos (m)')
-plt.show()
+#for entry in results:
+#    plt.plot(entry[0]/time_factor, entry[1])
+#plt.xlabel('Time (yrs)')
+#plt.ylabel('Front pos (m)')
+#plt.show()
 
 # get latest damage of fibers with ssaModel.fbmobs.data
 # get front position over time with ssaModel.frontobs.data
