@@ -183,21 +183,21 @@ class FBMFullTracer(object):
         else:
             return True
 
-    def calve(self, i=None):
+    def calve(self, i=None, x=None):
         """Remove broken tracer and tracers connected to the front.
         """
-        self._toList()
-        if i == None:
+        if x is not None:
+            print('Calving from Lmax')
+            i=np.argwhere(self.x > x)[0][0]
+        elif i is None:
             assert self.check_calving(), 'No index given, none to break'
             i=np.argwhere(np.sum(self.ss,axis=1)==0)[0][0]
-        #print('Calve tracer {}'.format(i))
+            #print(np.mean(self.xcs[i])) 
         xc = self.x[i]
         j = self.N - 1
         while j >= i:
             self.remove_tracer(j)
             j-=1
-        return xc
-        self._toArr()
                 
         return xc
 
