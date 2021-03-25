@@ -187,8 +187,13 @@ class FBMFullTracer(object):
         """Remove broken tracer and tracers connected to the front.
         """
         if x is not None:
-            print('Calving from Lmax')
-            i=np.argwhere(self.x > x)[0][0]
+            try:
+                i=np.argwhere(self.x > x)[0][0]
+                print('Removing particles beyond Lmax')
+            except IndexError:
+                print('No particles beyond Lmax')
+                
+            
         elif i is None:
             assert self.check_calving(), 'No index given, none to break'
             i=np.argwhere(np.sum(self.ss,axis=1)==0)[0][0]
