@@ -111,6 +111,11 @@ class ssa1D:
                             self.continuousH().vector().get_local(),
                             self.U.vector().get_local()])
 
+    @property
+    def strain(self):
+        """Convenience function for outputting integrated strain"""
+        return np.log(self.U.vector().get_local()/self.U0)
+
     def init_function_space(self,mesh,order):
         # vector CG element for velocity
         P2 = VectorElement("CG", mesh.ufl_cell(), order)
@@ -295,8 +300,8 @@ class ssa1D:
                 self.calve(xc)
             if self.Lmax is not None and self.Lx > self.Lmax:
                 print('Calving to Lmax')
-                xc = self.fbm.calve(x=self.Lmax)
-                self.calve(self.Lmax, no_notify=True)
+                xc = self.fbm.calve(x=self.Lmax-1e-6)
+                self.calve(xc, no_notify=False)
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
@@ -332,32 +337,67 @@ class ssa1D:
         # Store the solutions internally.
         self.H,self.U=dq.split(deepcopy = True)
 
+#    def advect_mesh(self, U, dt, Lmax=1e20):
+#        """Advect the mesh with the velocity field U over timestep dt.
+#        First-order Euler forward step.
+#        """
+#        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
+#        #    return
+#        dLx = U(self.Lx)*dt
+#        dLx = U.vector().get_local()[0]*dt
+#        # First, create the new boundary by moving the calving front only.
+#        boundary = BoundaryMesh(self.mesh, "exterior")
+#        for x in boundary.coordinates():
+#            # Janky check, works in 1D
+#            if x[0] != 0:
+#                Lx = x[0] + dLx 
+#                x[0] = Lx
+#                self.Lx = Lx
+#
+#        # Copty the mesh, just in case
+#        old_mesh = Mesh(self.mesh)
+#        # Stretch the mesh using the new boundary.
+#        ALE.move(self.mesh, boundary) 
+#        # Do some checks!?
+#        # ?????
+#        # Delete the old mesh
+#        del old_mesh
+#        # Rebuild the mesh box.
+#        self.mesh.bounding_box_tree().build(self.mesh)
+
     def advect_mesh(self, U, dt, Lmax=1e20):
-        """Advect the mesh with the velocity field U over timestep dt.
-        First-order Euler forward step.
-        """
-        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
-        #    return
+        dLx = U(self.Lx)*dt
+        dx = dLx * np.arange(self.Nx+1) / self.Nx
 
-        # First, create the new boundary by moving the calving front only.
-        boundary = BoundaryMesh(self.mesh, "exterior")
-        for x in boundary.coordinates():
-            # Janky check, works in 1D
-            if x[0] != 0:
-                Lx = x[0] + U.vector().get_local()[0]*dt
-                x[0] = Lx
-                self.Lx = Lx
+        # Make post-calving mesh
+        new_mesh = IntervalMesh(self.Nx, 0.0, self.Lx+dLx)
 
-        # Copty the mesh, just in case
-        old_mesh = Mesh(self.mesh)
-        # Stretch the mesh using the new boundary.
-        ALE.move(self.mesh, boundary) 
-        # Do some checks!?
-        # ?????
-        # Delete the old mesh
-        del old_mesh
-        # Rebuild the mesh box.
-        self.mesh.bounding_box_tree().build(self.mesh)
+        # Create new function spaces on this mesh
+        Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec = self.init_function_space(new_mesh,self.order)
+
+        # Create new functions on the mesh
+        Hnew = Function(Q_cg);Unew = Function(Q_vec)
+
+        # Set ice thickness and velocity based on data interpolated from
+        # pre-calved mesh
+        Hcg = interpolate(self.H, self.Q_cg)
+        Hnew_arr = np.array([Hcg(i) for i in new_mesh.coordinates()][::-1])
+
+        Unew_arr = np.array([self.U(i) for i in new_mesh.coordinates()][::-1])
+
+        Hnew.vector().set_local(Hnew_arr);Unew.vector().set_local(Unew_arr)
+
+        # Replace functions
+        self.H = interpolate(Hnew,Q);
+        self.U = Unew.copy(deepcopy=True)
+
+
+        self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, self.ncell, self.hcell, self.v, self.v_vec, self.phi, self.phi_vec = Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec 
+        # Dispose of original mesh and replace
+        del self.mesh
+        self.mesh = new_mesh
+ 
+        self.Lx += dLx
 
     def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
