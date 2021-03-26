@@ -36,6 +36,8 @@ class ssa1D:
             mesh evolves using Arbitrary Lagrange-Euler (ALE) method.
         calve_flag = if True, fiber bundle tracers and max length will calve
 
+        Lmax = a catch against exceeding the mass balance
+
         We use CG function spaces for velocity and DG function spaces
         for ice thickness and solve the continuity equation simultaneously with
         the SSA equation so that we can take implicit time steps
@@ -260,8 +262,8 @@ class ssa1D:
 
         s = source(phi,accum)
 
-        L1 = M - (b + s)
-
+                    L1 = M - (b + s)
+                    
         return L1
 
 
@@ -294,13 +296,14 @@ class ssa1D:
             self.t += dt
 
             # Check if calving-criterion is met anywhere
-            if self.calve_flag and self.fbm.check_calving():
-                # If so, and if calve_flag is True, calve
-                xc = self.fbm.calve()
+            if self.calve_flag and self.fbm is not None and self.fbm.check_calving():
+                # If so, and if calve_flag is True, calve   
+                 xc = self.fbm.calve()
                 self.calve(xc)
             if self.Lmax is not None and self.Lx > self.Lmax:
                 print('Calving to Lmax')
-                xc = self.fbm.calve(x=self.Lmax-1e-6)
+                if self.fbm is not None:
+                    xc = self.fbm.calve(x=self.Lmax-1e-6)
                 self.calve(xc, no_notify=False)
 
             for obs in self.obslist: obs.notify_step(self, dt)
