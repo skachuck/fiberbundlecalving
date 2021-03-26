@@ -298,7 +298,7 @@ class ssa1D:
             # Check if calving-criterion is met anywhere
             if self.calve_flag and self.fbm is not None and self.fbm.check_calving():
                 # If so, and if calve_flag is True, calve   
-                 xc = self.fbm.calve()
+                xc = self.fbm.calve()
                 self.calve(xc)
             if self.Lmax is not None and self.Lx > self.Lmax:
                 print('Calving to Lmax')
