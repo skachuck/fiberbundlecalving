@@ -192,7 +192,7 @@ class FBMFullTracer(object):
                 print('Removing particles beyond Lmax')
             except IndexError:
                 print('No particles beyond Lmax')
-                
+                return x
             
         elif i is None:
             assert self.check_calving(), 'No index given, none to break'
