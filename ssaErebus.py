@@ -13,12 +13,15 @@ from ssaModel import *
 set_log_level(00)
 set_log_active(False)
 
+#NT = 365 --> 100 years
+#NT = 456 --> 125 years
+#NT = 100 --> 27.5 years
 # Set simulation parameters
 DT = 8640000
 Nx = 2**8    # Number of points in the x-direction
 Lx = 200e3/1 # Length of domain in the x-direction
 DX = Lx/Nx
-NT = 1000
+NT = 365
 
 # Set ice shelf parameters
 accum = -2./time_factor # m/s
@@ -40,7 +43,7 @@ mesh = IntervalMesh(Nx, 0.0, Lx)
 fbmkwargs={'Lx':Lx,
            'N0':1000,
            'Nf':10,
-           'xsep':200,
+           'xsep':20,
            'fbm_type':'full'}
 
 # In the large-Nf limit, the maximum stress per fiber of a bundle of fibers 
@@ -49,10 +52,11 @@ fbmkwargs={'Lx':Lx,
 # Accounting for fluctuations due to finite N (Fmax_actual = Fmax + d N**1/3),
 # with d~0.3138 for the strict distribution over [0,1], get xmax=0.923
 #fbmkwargs['dist'] = strict_dist(0,0.923)
-fbmkwargs['dist'] = strict_dist(0,0.179)
-#fbmkwargs['dist'] = uni_dist(0,0.179)
+
+# fbmkwargs['dist'] = strict_dist(0,0.179)
+fbmkwargs['dist'] = uni_dist(0,0.179)
 results = []
-for i in range(1):
+for i in range(10):
     mesh = IntervalMesh(Nx, 0.0, Lx)
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,B=B,
                         advect_front=True, calve_flag=True,
@@ -63,9 +67,11 @@ for i in range(1):
     H,U=ssaModel.init_shelf(accum)
     ssaModel.H = H
     ssaModel.U = U
-    
+
     # Run the model in time
-    #H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=accum);
+    H,U = ssaModel.integrate(H,U,dt=DT,Nt=NT,accum=accum); #getting error here when trying to run the model in time
+    #self.x doesn't have any particles and it's trying to pull from an empty list in self.x.pop(i)
+
     
     results.append(ssaModel.frontobs.data)
 
@@ -73,12 +79,26 @@ for i in range(1):
 #plt.xlabel('Position of particles (m)')
 #plt.ylabel('Damage of particles (dimless)')
 #plt.show()
-#
-#for entry in results:
-#    plt.plot(entry[0]/time_factor, entry[1])
-#plt.xlabel('Time (yrs)')
-#plt.ylabel('Front pos (m)')
-#plt.show()
+
+event_counts = []
+for entry in results:
+    event_count = 0
+    plt.plot(entry[0]/time_factor, entry[1])
+    for i in range(1,len(entry[1])):
+        current_value = entry[1][i]
+        previous_value = entry[1][i-1]
+        if current_value < previous_value:
+            event_count +=1
+    event_counts.append(event_count)
+
+print('Number of calving events per run:',event_counts)
+print('Average number of calving events in 10 runs:',sum(event_counts)/len(event_counts))
+
+for entry in results:
+   plt.plot(entry[0]/time_factor, entry[1])
+plt.xlabel('Time (yrs)')
+plt.ylabel('Front pos (m)')
+plt.show()
 
 # get latest damage of fibers with ssaModel.fbmobs.data
 # get front position over time with ssaModel.frontobs.data

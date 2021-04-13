@@ -259,8 +259,51 @@ class ssa1D:
 
         return L1
 
+#This is the old integrate function with the error in the calving check
+    # def integrate(self,H,U,dt=86400.0,Nt=1,accum=1e-16):
+    #     """
+    #     Integrate systems of equations for Nt steps.
+    #     H = ice thickness
+    #     U = velocity
+    #     dt = time step (seconds)
+    #     Nt = number of time steps to take
+    #     accum = default accumulation
+    #     """
+    #     self.H, self.U = H, U
+    #     if accum < 0:
+    #         Lmax = -self.H0*self.U0/accum
+    #     else:
+    #         Lmax = 1e20
+    #
+    #     accum = Constant(accum)
+    #     for i in xrange(Nt):
+    #         # Advect the front
+    #         if self.advect_front:
+    #             self.advect_mesh(self.U, dt, Lmax)
+    #         # Compute the new U and H fields
+    #         self.step(dt,accum)
+    #         # Advect the FBM tracer particles
+    #         if self.fbm is not None:
+    #             self.fbm.advect_particles(self, dt)
+    #         # Advance the time
+    #         self.t += dt
+    #
+    #         # Check if calving-criterion is met anywhere
+    #         if self.calve_flag and self.fbm.check_calving():
+    #             # If so, and if calve_flag is True, calve
+    #             xc = self.fbm.calve()
+    #             self.calve(xc)
+    #         if self.Lmax is not None and self.Lx > self.Lmax:
+    #             print('Calving to Lmax')
+    #             xc = self.fbm.calve(x=self.Lmax)
+    #             self.calve(self.Lmax, no_notify=True)
+    #
+    #         for obs in self.obslist: obs.notify_step(self, dt)
+    #
+    #     return self.H,self.U
 
-    def integrate(self,H,U,dt=86400.0,Nt=1,accum=1e-16):
+#New integrate function with calve check fixed
+    def integrate(self, H, U, dt=86400.0, Nt=1, accum=1e-16):
         """
         Integrate systems of equations for Nt steps.
         H = ice thickness
@@ -271,7 +314,7 @@ class ssa1D:
         """
         self.H, self.U = H, U
         if accum < 0:
-            Lmax = -self.H0*self.U0/accum
+            Lmax = -self.H0 * self.U0 / accum
         else:
             Lmax = 1e20
 
@@ -281,7 +324,7 @@ class ssa1D:
             if self.advect_front:
                 self.advect_mesh(self.U, dt, Lmax)
             # Compute the new U and H fields
-            self.step(dt,accum)
+            self.step(dt, accum)
             # Advect the FBM tracer particles
             if self.fbm is not None:
                 self.fbm.advect_particles(self, dt)
@@ -289,18 +332,20 @@ class ssa1D:
             self.t += dt
 
             # Check if calving-criterion is met anywhere
-            if self.calve_flag and self.fbm.check_calving():
+            if self.calve_flag and self.fbm is not None and self.fbm.check_calving():
                 # If so, and if calve_flag is True, calve
                 xc = self.fbm.calve()
                 self.calve(xc)
             if self.Lmax is not None and self.Lx > self.Lmax:
                 print('Calving to Lmax')
-                xc = self.fbm.calve(x=self.Lmax)
-                self.calve(self.Lmax, no_notify=True)
+                if self.fbm is not None:
+                    xc = self.fbm.calve(x=self.Lmax - 1e-6)
+                    self.calve(xc, no_notify=False)
+                # self.calve(self.Lmax, no_notify=False) #<-- try this way also
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
-        return self.H,self.U
+        return self.H, self.U
 
     def step(self,dt=86400.0,accum=1e-16):
         """Step forward in time once.
@@ -332,32 +377,68 @@ class ssa1D:
         # Store the solutions internally.
         self.H,self.U=dq.split(deepcopy = True)
 
+    # def advect_mesh(self, U, dt, Lmax=1e20):
+    #     """Advect the mesh with the velocity field U over timestep dt.
+    #     First-order Euler forward step.
+    #     """
+    #     #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
+    #     #    return
+    #
+    #     # First, create the new boundary by moving the calving front only.
+    #     boundary = BoundaryMesh(self.mesh, "exterior")
+    #     for x in boundary.coordinates():
+    #         # Janky check, works in 1D
+    #         if x[0] != 0:
+    #             Lx = x[0] + U.vector().get_local()[0]*dt
+    #             x[0] = Lx
+    #             self.Lx = Lx
+    #
+    #     # Copty the mesh, just in case
+    #     old_mesh = Mesh(self.mesh)
+    #     # Stretch the mesh using the new boundary.
+    #     ALE.move(self.mesh, boundary)
+    #     # Do some checks!?
+    #     # ?????
+    #     # Delete the old mesh
+    #     del old_mesh
+    #     # Rebuild the mesh box.
+    #     self.mesh.bounding_box_tree().build(self.mesh)
+
     def advect_mesh(self, U, dt, Lmax=1e20):
-        """Advect the mesh with the velocity field U over timestep dt.
-        First-order Euler forward step.
-        """
-        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
-        #    return
+        dLx = U(self.Lx) * dt
+        dx = dLx * np.arange(self.Nx + 1) / self.Nx
 
-        # First, create the new boundary by moving the calving front only.
-        boundary = BoundaryMesh(self.mesh, "exterior")
-        for x in boundary.coordinates():
-            # Janky check, works in 1D
-            if x[0] != 0:
-                Lx = x[0] + U.vector().get_local()[0]*dt
-                x[0] = Lx
-                self.Lx = Lx
+        # Make post-calving mesh
+        new_mesh = IntervalMesh(self.Nx, 0.0, self.Lx + dLx)
 
-        # Copty the mesh, just in case
-        old_mesh = Mesh(self.mesh)
-        # Stretch the mesh using the new boundary.
-        ALE.move(self.mesh, boundary) 
-        # Do some checks!?
-        # ?????
-        # Delete the old mesh
-        del old_mesh
-        # Rebuild the mesh box.
-        self.mesh.bounding_box_tree().build(self.mesh)
+        # Create new function spaces on this mesh
+        Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec = self.init_function_space(new_mesh,
+                                                                                                         self.order)
+
+        # Create new functions on the mesh
+        Hnew = Function(Q_cg);
+        Unew = Function(Q_vec)
+
+        # Set ice thickness and velocity based on data interpolated from
+        # pre-calved mesh
+        Hcg = interpolate(self.H, self.Q_cg)
+        Hnew_arr = np.array([Hcg(i) for i in new_mesh.coordinates()][::-1])
+
+        Unew_arr = np.array([self.U(i) for i in new_mesh.coordinates()][::-1])
+
+        Hnew.vector().set_local(Hnew_arr);
+        Unew.vector().set_local(Unew_arr)
+
+        # Replace functions
+        self.H = interpolate(Hnew, Q);
+        self.U = Unew.copy(deepcopy=True)
+
+        self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, self.ncell, self.hcell, self.v, self.v_vec, self.phi, self.phi_vec = Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec
+        # Dispose of original mesh and replace
+        del self.mesh
+        self.mesh = new_mesh
+
+        self.Lx += dLx
 
     def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
@@ -423,25 +504,25 @@ class ssa1D:
 
 ### PLOT FUNCTIONS ####
 
-def plot_profiles(H, hnew, U, unew):
-    fig=plt.figure(2)
-    fig.clf()
-    plt.subplot(2,1,1)
-    plot(unew[0]*time_factor,color='k',label='numeric')
-    plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
-    plt.xlabel('Distance (m)')
-    plt.ylabel('Velocity (m/a)')
-    plt.subplot(2,1,2)
-    
-    plot(hnew,color='k',label='numerical solution')
-    plot(H,color='r',linestyle='--',label='analytic')
-    plt.legend()
-    plt.xlabel('Distance (m)')
-    plt.ylabel('Ice shelf elevation (m.a.s.l.)')
-    plt.plot()
-    plt.tight_layout()
-    plt.show()
-    return plt.gca()
+# def plot_profiles(H, hnew, U, unew):
+#     fig=plt.figure(2)
+#     fig.clf()
+#     plt.subplot(2,1,1)
+#     plot(unew[0]*time_factor,color='k',label='numeric')
+#     plot(U[0]*time_factor,color='r',linestyle='--',label='analytic')
+#     plt.xlabel('Distance (m)')
+#     plt.ylabel('Velocity (m/a)')
+#     plt.subplot(2,1,2)
+#
+#     plot(hnew,color='k',label='numerical solution')
+#     plot(H,color='r',linestyle='--',label='analytic')
+#     plt.legend()
+#     plt.xlabel('Distance (m)')
+#     plt.ylabel('Ice shelf elevation (m.a.s.l.)')
+#     plt.plot()
+#     plt.tight_layout()
+#     plt.show()
+#     return plt.gca()
 
 
 #### OBSERVER CLASS FOR RECORDING SIMULATION ####

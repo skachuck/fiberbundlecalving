@@ -2,7 +2,6 @@
 fbmtracer.py
 Author: Samuel Kachuck
 Date: Sep 1, 2020
-
 Provides the tracer particle class that contains fiber bundles for calving the
 ssa1d class, along with a collection of random strength distributions and state
 variable functions.
@@ -15,7 +14,6 @@ class FBMFullTracer(object):
     def __init__(self, Lx, N0, Nf=10, dist=None, compState=None, stepState=None, xsep=1e16, **kwargs):
         """
         A container for tracer particles in a 1D fenics ice dynamics model.
-
         The tracers advect with the fluid velocity, but do not affect the flow
         until the fiber bundle models they carry break, at which point calving
         is triggered in the ice flow model.
@@ -25,14 +23,13 @@ class FBMFullTracer(object):
         stepState, that is used to intergate the state variable when the
         particles advect. For the latter, provide a function that computes the
         state variable when checking for calving. Only one may be specified.
-
         Parameters
         ----------
         Lx : the length of the system
         N0 : the initial number of particles (spread evenly through the ice
             sheet)
         dist : a function that returns a random threshold
-        compState(x, ssaModel) : a function that computes the path-independent state 
+        compState(x, ssaModel) : a function that computes the path-independent state
             variable from the ssaModel at locations x, default None. If both
             compState and stepState are None, compState is defined as
             strain_thresh.
@@ -40,14 +37,12 @@ class FBMFullTracer(object):
             time-derivative of the state variable, for integrating, default
             None
         xsep : the separation of particles when added to the system
-
         Data
         ----
         N : number of particles
         x : location of particles
         s : threshold of particles
         state : the state of each particle
-
         Methods
         -------
         advect_particles
@@ -66,7 +61,7 @@ class FBMFullTracer(object):
         if compState is None and stepState is None:
             self.compState = strain_thresh
 
-        # Fiber bundles 
+        # Fiber bundles
         self.dist = dist or strict_dist()
         # Number of fibers per bundle
         self.Nf = int(Nf)
@@ -90,8 +85,8 @@ class FBMFullTracer(object):
 
     def _toArr(self):
         if not self.listform: return
-        self.x = np.asarray(self.x) 
-        self.xcs = np.asarray(self.xcs) 
+        self.x = np.asarray(self.x)
+        self.xcs = np.asarray(self.xcs)
         self.ss = np.asarray(self.ss)
         self.F = np.asarray(self.F)
         self.listform = False
@@ -119,8 +114,8 @@ class FBMFullTracer(object):
     def force(self, F):
         #print('Forcing with {}'.format(F))
         self.F = F
-        # Find tracers with broken fibers 
-        for i in self.active_tracers: 
+        # Find tracers with broken fibers
+        for i in self.active_tracers:
             while any(self.ss[i]) and any(self.exceeded_threshold[i][self.ss[i]]):
                 j = np.argwhere(self.exceeded_threshold[i]*self.ss[i])[0][0]
                 #print('Breaking {} {}'.format(i,j))
@@ -192,18 +187,16 @@ class FBMFullTracer(object):
                 print('Removing particles beyond Lmax')
             except IndexError:
                 print('No particles beyond Lmax')
-                
-            
+                return x
+
         elif i is None:
             assert self.check_calving(), 'No index given, none to break'
             i=np.argwhere(np.sum(self.ss,axis=1)==0)[0][0]
-            #print(np.mean(self.xcs[i])) 
+            #print(np.mean(self.xcs[i]))
         xc = self.x[i]
         j = self.N - 1
         while j >= i:
             self.remove_tracer(j)
             j-=1
-                
+
         return xc
-
-
