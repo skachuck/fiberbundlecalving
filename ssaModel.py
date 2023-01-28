@@ -20,8 +20,8 @@ parameters['allow_extrapolation'] = True
 
 class ssa1D:
     def __init__(self,mesh,U0=8e-6,H0=800,order=1,beta=0.,m=3, B=0.5e8,
-                advect_front=False, calve_flag=False, fbm_type=None,
-                fbmkwargs={}, Lmax=None):
+                r=None, advect_front=False, calve_flag=False, fbm_type=None,
+                rho_i=920, rho_w=1030, fbmkwargs={}, Lmax=1e20):
         """
         Evolves a 1D ice shelf using the shallow shelf approximation.
 
@@ -30,11 +30,25 @@ class ssa1D:
         H0 = Ice thickness at the grounding line (m)
         beta = Drag coefficient
         m = Drag exponent
+        r = An expression for the bedrock (default is -1e20, i.e., floating)
         order = Order of the function space (typically 1 or 2)
 
         advect_front = if True, front advects with the front velocity, 
             mesh evolves using Arbitrary Lagrange-Euler (ALE) method.
-        calve_flag = if True, fiber bundle tracers and max length will calve
+        calve_flag = if True, fiber bundle tracers and max length will calve.
+
+        fbm_type:   'max', 'full', or None (default None)
+                    The type of fiber bundle model to implement.
+                    Can be 'max', which models each fiber bundle by its
+                    randomly distributed maximum strength (distributed by
+                    fbmkwargs['dist']); or 'full', which models each fiber
+                    within each bundle with independently randomized strenghts
+                    (also distributed by fbmkwargs['dist']).
+        fbmkwargs:  Dictionary of properties for fiber bundle model. Defines
+                    'fbm_type' (see above), 'N0' (the initial number of
+                    bundles), 'xsep' (the spacing between particles introduced
+                    at the GL), 'Nf' (the number of fibers per bundle), and
+                    'Lx' (the initial length of the ice sheet).
 
         Lmax = a catch against exceeding the mass balance
 
@@ -52,9 +66,8 @@ class ssa1D:
         self.m = m
 
         # Initialize constants
-        self.rho_i = 920.0   # Density of ice (kg/m^3)
-        self.rho_w = 1030.0  # Density of ambient ocean water (kg/m^3)
-        self.rho_f = 1000.0  # Density of freshwater (kg/m^3)
+        self.rho_i = rho_i   # Density of ice (kg/m^3)
+        self.rho_w = rho_w   # Density of ambient ocean water (kg/m^3)
 
         # Acceleration due to gravity
         self.g = 9.81 # acceleration due to gravity m/s^2
@@ -70,21 +83,32 @@ class ssa1D:
         
         self.order = order
 
+        # Bedrock initialization
+        self.r = r or Expression('-1e20',degree=1, domain=self.mesh)
+        self.r = r or Constant(-1e20,cell=self.mesh.ufl_cell())#Expression('-1e20',degree=1, domain=self.mesh)
+
         # Initialize function spaces
         self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, \
         self.ncell, self.hcell, self.v, self.v_vec, \
         self.phi, self.phi_vec = self.init_function_space(self.mesh,order)
 
+        # Initialize observers
         self.obslist = []
-        self.advect_front = advect_front
-        self.frontobs = FrontObserver(self)
-        self.obslist.append(self.frontobs)
 
+        # If front will advect, track it.
+        self.advect_front = advect_front
+        if self.advect_front:
+            self.frontobs = FrontObserver(self)
+            self.obslist.append(self.frontobs)
+
+        # If shelf will calve, record events
         self.calve_flag = calve_flag 
         if calve_flag:
             self.calveobs = CalveObserver(self)
             self.obslist.append(self.calveobs)
 
+        # If Fiber-Bundle Tracers will cause calving, record positions and
+        # damages.
         if fbm_type == 'max':
             self.fbm = FBMMaxStrengthTracer(**fbmkwargs)
             self.fbmobs = FBMObserver(self)
@@ -107,16 +131,11 @@ class ssa1D:
 
     @property
     def data(self):
-        """Convenience function for saving (x, H, U)
+        """Convenience function for outputting (x, H, U)
         """
         return np.vstack([self.mesh.coordinates().squeeze()[::-1],
                             self.continuousH().vector().get_local(),
                             self.U.vector().get_local()])
-
-    @property
-    def strain(self):
-        """Convenience function for outputting integrated strain"""
-        return np.log(self.U.vector().get_local()/self.U0)
 
     def init_function_space(self,mesh,order):
         # vector CG element for velocity
@@ -191,7 +210,7 @@ class ssa1D:
         bcs = [bc1,bc2]
         return bcs
 
-    def velocity(self,H):
+    def velocity(self, H):
         """
         Variational form for the velocity
             Fully implicit now so we don't actually need to
@@ -221,14 +240,20 @@ class ssa1D:
         # Effective acceleration due to gravity
         f = Constant(self.rho_i*self.g*(1-self.rho_i/self.rho_w))
 
-        b = -self.rho_i/self.rho_w*H
-
         # SSA variational form
         Hmid = (H+q)/2
+        #Hmid = q
         F1 = inner(2*eta(u)*Hmid*grad(u), grad(v))*dx
         F2 = inner(0.5*f*Hmid**2, nabla_div(v))*dx
+#        F2 = conditional(lt(self.rho_i/self.rho_w*Hmid,-self.r),    
+#            inner(0.5*self.rho_i*self.g*Hmid**2, nabla_div(v))*dx+inner(self.rho_i*self.g*Hmid*grad(self.r), v)*dx,  # If grounded
+#            inner(0.5*f*Hmid**2, nabla_div(v))*dx)              # If floating
+
         # Drag
-        F3 = inner(self.beta*u,v)*dx
+        F3 = inner(self.beta*abs(u)**(self.m-1)*u,v)*dx
+#        F3 = conditional(lt(self.rho_i/self.rho_w*Hmid,-self.r),    
+#            inner(self.beta*abs(u)**(self.m-1)*u,v)*dx,         # If grounded
+#            0)                                                  # If floating
         F = F1-F2+F3
 
         return F
@@ -262,7 +287,7 @@ class ssa1D:
 
         s = source(phi,accum)
 
-                    L1 = M - (b + s)
+        L1 = M - (b + s)
                     
         return L1
 
@@ -277,16 +302,12 @@ class ssa1D:
         accum = default accumulation
         """
         self.H, self.U = H, U
-        if accum < 0:
-            Lmax = -self.H0*self.U0/accum
-        else:
-            Lmax = 1e20
-
+        
         accum = Constant(accum)
         for i in xrange(Nt):
             # Advect the front
             if self.advect_front:
-                self.advect_mesh(self.U, dt, Lmax)
+                self.advect_mesh(self.U, dt, self.Lmax)
             # Compute the new U and H fields
             self.step(dt,accum)
             # Advect the FBM tracer particles
@@ -304,7 +325,7 @@ class ssa1D:
                 print('Calving to Lmax')
                 if self.fbm is not None:
                     xc = self.fbm.calve(x=self.Lmax-1e-6)
-                self.calve(xc, no_notify=False)
+                self.calve(self.Lmax, no_notify=False)
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
@@ -340,67 +361,74 @@ class ssa1D:
         # Store the solutions internally.
         self.H,self.U=dq.split(deepcopy = True)
 
-#    def advect_mesh(self, U, dt, Lmax=1e20):
-#        """Advect the mesh with the velocity field U over timestep dt.
-#        First-order Euler forward step.
-#        """
-#        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
-#        #    return
-#        dLx = U(self.Lx)*dt
-#        dLx = U.vector().get_local()[0]*dt
-#        # First, create the new boundary by moving the calving front only.
-#        boundary = BoundaryMesh(self.mesh, "exterior")
-#        for x in boundary.coordinates():
-#            # Janky check, works in 1D
-#            if x[0] != 0:
-#                Lx = x[0] + dLx 
-#                x[0] = Lx
-#                self.Lx = Lx
-#
-#        # Copty the mesh, just in case
-#        old_mesh = Mesh(self.mesh)
-#        # Stretch the mesh using the new boundary.
-#        ALE.move(self.mesh, boundary) 
-#        # Do some checks!?
-#        # ?????
-#        # Delete the old mesh
-#        del old_mesh
-#        # Rebuild the mesh box.
-#        self.mesh.bounding_box_tree().build(self.mesh)
-
     def advect_mesh(self, U, dt, Lmax=1e20):
+        """Advect the mesh with the velocity field U over timestep dt.
+        First-order Euler forward step.
+        """
+        #if self.Lx + U.vector().get_local()[0]*dt >= Lmax:
+        #    return
         dLx = U(self.Lx)*dt
-        dx = dLx * np.arange(self.Nx+1) / self.Nx
+        dLx = U.vector().get_local()[0]*dt
+        # First, create the new boundary by moving the calving front only.
+        boundary = BoundaryMesh(self.mesh, "exterior")
+        for x in boundary.coordinates():
+            # Janky check, works in 1D
+            if x[0] != 0:
+                Lx = x[0] + dLx 
+                x[0] = Lx
+                self.Lx = Lx
 
-        # Make post-calving mesh
-        new_mesh = IntervalMesh(self.Nx, 0.0, self.Lx+dLx)
+        # Copty the mesh, just in case
+        old_mesh = Mesh(self.mesh)
+        # Stretch the mesh using the new boundary.
+        ALE.move(self.mesh, boundary) 
+        # Do some checks!?
+        # ?????
+        # Delete the old mesh
+        del old_mesh
+        # Rebuild the mesh box.
+        self.mesh.bounding_box_tree().build(self.mesh)
 
-        # Create new function spaces on this mesh
-        Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec = self.init_function_space(new_mesh,self.order)
+        #dx = dLx * np.arange(self.Nx+1)[::-1] / self.Nx
+        #gradU = project(grad(self.U[0]), self.Q_cg_vec).vector().get_local()
+        #self.U.vector().set_local(self.U.vector().get_local() - gradU*dx)
 
-        # Create new functions on the mesh
-        Hnew = Function(Q_cg);Unew = Function(Q_vec)
+    #def advect_mesh(self, U, dt, Lmax=1e20):
+    #    dLx = U(self.Lx)*dt
+    #    dx = dLx * np.arange(self.Nx+1) / self.Nx
 
-        # Set ice thickness and velocity based on data interpolated from
-        # pre-calved mesh
-        Hcg = interpolate(self.H, self.Q_cg)
-        Hnew_arr = np.array([Hcg(i) for i in new_mesh.coordinates()][::-1])
+    #    # Make post-calving mesh
+    #    new_mesh = IntervalMesh(self.Nx, 0.0, self.Lx+dLx)
 
-        Unew_arr = np.array([self.U(i) for i in new_mesh.coordinates()][::-1])
+    #    # Create new function spaces on this mesh
+    #    Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec = self.init_function_space(new_mesh,self.order)
 
-        Hnew.vector().set_local(Hnew_arr);Unew.vector().set_local(Unew_arr)
+    #    # Create new functions on the mesh
+    #    Hnew = Function(Q_cg);Unew = Function(Q_vec)
 
-        # Replace functions
-        self.H = interpolate(Hnew,Q);
-        self.U = Unew.copy(deepcopy=True)
+    #    # Set ice thickness and velocity based on data interpolated from
+    #    # pre-calved mesh
+    #    Hcg = interpolate(self.H, self.Q_cg)
+    #    Hnew_arr = np.array([Hcg(i) for i in new_mesh.coordinates()][::-1])
+
+    #    Unew_arr = np.array([self.U(i) for i in new_mesh.coordinates()][::-1])
+
+    #    Hnew.vector().set_local(Hnew_arr);Unew.vector().set_local(Unew_arr)
+
+    #    # Replace functions
+    #    self.H = interpolate(Hnew,Q);
+    #    self.U = Unew.copy(deepcopy=True)
 
 
-        self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, self.ncell, self.hcell, self.v, self.v_vec, self.phi, self.phi_vec = Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec 
-        # Dispose of original mesh and replace
-        del self.mesh
-        self.mesh = new_mesh
+    #    self.Q_sys, self.Q, self.Q_vec, self.Q_cg, self.Q_cg_vec, self.ncell, self.hcell, self.v, self.v_vec, self.phi, self.phi_vec = Q_sys, Q, Q_vec, Q_cg, Q_cg_vec, ncell, hcell, v, v_vec, phi, phi_vec 
+    #    # Dispose of original mesh and replace
+    #
+    #    self.mesh = new_mesh
+    #    del new_mesh
+
+    #    self.mesh.bounding_box_tree().build(self.mesh)
  
-        self.Lx += dLx
+    #    self.Lx += dLx
 
     def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc, and remesh.
@@ -550,8 +578,8 @@ if __name__ == '__main__':
     
     # Example showing how to use the model
     # Example 1: Resolution too low to accurately resolve the velocity field
-    Nx = 2**9    # Number of points in the x-direction
-    Lx = 200e3/1 # Length of domain in the x-direction
+    Nx = 2**12    # Number of points in the x-direction
+    Lx = 200e3/1 # Length of domain in the x-direction 
     
     # Setup ice shelf parameters
     accum = 0.3/time_factor # m/s
@@ -569,7 +597,7 @@ if __name__ == '__main__':
                 'stepState':strain_ddt,
                 'Nf':100}
     ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
-                            calve_flag=True,fbmkwargs=fbmkwargs) 
+                            calve_flag=False,fbmkwargs=fbmkwargs) 
     
     #ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
     del mesh
@@ -617,9 +645,11 @@ if __name__ == '__main__':
         H,U=ssaModel.init_shelf(accum)
         ssaModel.H, ssaModel.U = H, U
         for i in range(10):
-            hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=86400.,Nt=100,
+            hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=8640.,Nt=100,
                                             accum=Constant(1*accum))
             fronts.append(ssaModel.Lx)
+
+            print('Calving step {}'.format(i))
             ssaModel.calve(Lx)
             H,U=ssaModel.init_shelf(accum)
 
@@ -950,7 +980,7 @@ if __name__ == '__main__':
     
     
     
-    #t = Expression('15000000*exp(-pow((Lx/2-x[0])/(Lx/16),2))',degree=1,Lx=Lx)
+    #t = Expression('1.5e7*exp(-pow((Lx/2-x[0])/(Lx/16),2))',degree=1,Lx=Lx)
     
     
     

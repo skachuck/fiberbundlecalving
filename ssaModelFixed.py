@@ -96,7 +96,7 @@ class ssa1D:
             self.fbm = None
 
         self.t = 0
-        self.Lmax = Lmax
+        self.Lmax = Lmax or self.Lx
 
     def continuousH(self, H=None):
         """Convenience function for DG H (stored) to CG H (useful).
@@ -105,8 +105,8 @@ class ssa1D:
         return interpolate(self.H, self.Q_cg)
 
     def enforce_thk_min(self):
-        currH = self.H.vetor().get_local()
-        self.H.vetor().set_local(np.maxmimum(self.min_thk, currH))
+        currH = self.H.vector().get_local()
+        self.H.vector().set_local(np.maximum(self.min_thk, currH))
 
     @property
     def data(self):
@@ -267,7 +267,7 @@ class ssa1D:
 
         s = source(phi,accum)
 
-                    L1 = M - (b + s)
+        L1 = M - (b + s)
                     
         return L1
 
@@ -303,11 +303,20 @@ class ssa1D:
             #        xc = self.fbm.calve(x=self.Lmax-1e-6)
             #    self.calve(self.Lmax, no_notify=False) 
 
-            self.Lx = min(self.data[0][np.argwhere(self.data[1]>self.min_thk)])
+            self.Lx = self.locate_front() 
 
             for obs in self.obslist: obs.notify_step(self, dt)
 
         return self.H,self.U
+
+    def locate_front(self):
+        atmin = np.argwhere(self.data[1]<=self.min_thk)
+        if np.size(atmin) > 0:
+            Lx = min(self.data[0][atmin])
+        else:
+            Lx = self.Lmax
+        
+        return Lx
 
     def step(self,dt=86400.0,accum=1e-16):
         """Step forward in time once.
@@ -343,7 +352,7 @@ class ssa1D:
     def calve(self, xc, no_notify=False):
         """Calve the ice shelf at xc.
         """
-        assert xc < self.Lx
+        assert xc <= self.Lx
 
         # Create new functions on the mesh
         Hnew = Function(self.Q_cg);
@@ -365,7 +374,7 @@ class ssa1D:
             for obs in self.obslist: 
                 obs.notify_calve(self.Lx, xc, self.t)
 
-        self.Lx = min(self.data[0][np.argwhere(self.data[1]>self.min_thk)])
+        self.Lx = self.locate_front()
 
     def plot_hu(self,U0=None,H0=None):
 
@@ -494,7 +503,7 @@ if __name__ == '__main__':
                    'dist':retconst(2.8),
                 'stepState':strain_ddt,
                 'Nf':100}
-    ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
+    ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,min_thk=1., 
                             calve_flag=True,fbmkwargs=fbmkwargs) 
     
     #ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
@@ -539,14 +548,15 @@ if __name__ == '__main__':
     if 'calvecheck' in sys.argv:
         fronts = []
         mesh = IntervalMesh(Nx, 0.0, Lx)
-        ssaModel =ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=False)
+        ssaModel =ssa1D(mesh,order=1,U0=U0,H0=H0,min_thk=1,calve_flag=False)
         H,U=ssaModel.init_shelf(accum)
         ssaModel.H, ssaModel.U = H, U
         for i in range(10):
-            hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=86400.,Nt=100,
+            hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=8640.,Nt=100,
                                             accum=Constant(1*accum))
             fronts.append(ssaModel.Lx)
-            ssaModel.calve(Lx)
+            print('Calving step {}'.format(i))
+            ssaModel.calve(Lx-1000)
             H,U=ssaModel.init_shelf(accum)
 
         plt.plot(*ssaModel.obslist[0].data)
@@ -572,7 +582,7 @@ if __name__ == '__main__':
                        'dist':uni_dist(0,.10),
                     'compState':strain_thresh,
                     'Nf':100.}
-        ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True, 
+        ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,min_thk=1., 
                                 calve_flag=True,fbmkwargs=fbmkwargs) 
         
         #ssaModel = ssa1D(mesh,order=1,U0=U0,H0=H0,advect_front=True,calve_flag=True)
@@ -580,7 +590,7 @@ if __name__ == '__main__':
         x,H,U = ssaModel.steady_state(accum)
         H,U=ssaModel.init_shelf(accum)
         ssaModel.H, ssaModel.U = H, U
-        hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=864000.,Nt=10000,
+        hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=86400.,Nt=10000,
                                           accum=Constant(1*accum))
         plt.plot(*ssaModel.obslist[0].data)
         plt.xlabel('Time (s)')

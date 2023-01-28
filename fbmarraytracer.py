@@ -163,6 +163,8 @@ class FBMFullTracer(object):
         # interpolate ice-velocities to particle positions
         U = np.array([ssaModel.U(x) for x in self.x])
         self.x += U*dt
+        # remove particles advected beyond the front.
+        self.calve(x=ssaModel.Lmax)
         # If integrated state variable, increment it.
         if self.stepState is not None:
             dstate_dt = np.array([self.stepState(x, ssaModel) for x in self.x])
