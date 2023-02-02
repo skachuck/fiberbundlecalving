@@ -70,6 +70,7 @@ class FBMMaxStrengthTracer(object):
         self.xsep = xsep
 
         self.listform = True
+        self._minbroken = None
 
     @property
     def data(self):
@@ -155,7 +156,9 @@ class FBMMaxStrengthTracer(object):
         """Remove broken FBMs and FBMs connected to the front.
         """
         self._toList()
-        i = i or self._minbroken
+        if i is not None:
+            try:
+                i = self._minbroken
         del self._minbroken
         xc = self.x[i]
         j = self.N - 1
