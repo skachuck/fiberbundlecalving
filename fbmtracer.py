@@ -106,6 +106,7 @@ class FBMMaxStrengthTracer(object):
             if self.x[i] > xp:
                 index = i
                 break
+        if self.N == 0: i=0
         self.x.insert(i,xp)
         self.s.insert(i,self.dist())
         self.state.insert(i,state)
@@ -156,9 +157,11 @@ class FBMMaxStrengthTracer(object):
         """Remove broken FBMs and FBMs connected to the front.
         """
         self._toList()
-        if i is not None:
+        if i is None:
             try:
                 i = self._minbroken
+            except:
+                print("Don't know where to calve")
         del self._minbroken
         xc = self.x[i]
         j = self.N - 1

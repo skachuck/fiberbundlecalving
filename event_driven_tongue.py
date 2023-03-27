@@ -71,8 +71,15 @@ ncalve = 0
 nsteps = 0
 while ncalve<NUM_CALVE:
     fbms._toArr()
+    # Intermediate event in the case that no FBMs remain
+    if len(fbms.s) == 0:
+        fbms.add_particle(0.)
+        # and convert its strength to distence along integrated strain curve
+        fbms.s[0] = thresh_dist_from_eps(fbms.s[0], tongue)
+        # Compute new fbm states
+        fbms.state = fbms.x[:]
     # Event type 1 - need to insert particle to keep DX_fbm between them.
-    if (1-(L/DX_fbm % 1.))*DX_fbm < np.min(fbms.s - fbms.state): 
+    elif (1-(L/DX_fbm % 1.))*DX_fbm < np.min(fbms.s - fbms.state): 
         # All distances move up to new fbm insertion
         dx = (1-(L/DX_fbm % 1.))*DX_fbm
         L += dx
@@ -83,6 +90,7 @@ while ncalve<NUM_CALVE:
         fbms.s[0] = thresh_dist_from_eps(fbms.s[0], tongue)
         # Compute new fbm states
         fbms.state = fbms.x[:]
+
     # Event type 2 - bundle is close to breaking, so move to break it.
     else:
         # Find the index of the FB nearest to breaking
