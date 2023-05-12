@@ -262,7 +262,7 @@ class ssa1D:
 
         s = source(phi,accum)
 
-                    L1 = M - (b + s)
+        L1 = M - (b + s)
                     
         return L1
 
@@ -587,7 +587,7 @@ if __name__ == '__main__':
     	mesh = IntervalMesh(Nx, 0.0, Lx)
     	
     	# Setup ice shelf parameters
-    	accum = 0.1/time_factor
+    	accum = -0.1/time_factor
     	H0 = 1000.0          # Ice thickness at the grounding line (m)
     	U0 = 250/time_factor # Velocity of ice at the grounding line (m/a)
     	
@@ -602,7 +602,7 @@ if __name__ == '__main__':
     	set_log_active(True)
     	
     	# Integrate model for 10 time steps
-    	hnew,unew = ssaModel.integrate(H,U,dt=86400.*100,Nt=10,accum=Constant(accum))
+    	hnew,unew = ssaModel.integrate(H,U,dt=86400.*100,Nt=10,accum=accum)
     	H,U=ssaModel.init_shelf(accum)
     	
         #plot_profiles(H,hnew,U,unew)
@@ -618,7 +618,7 @@ if __name__ == '__main__':
         ssaModel.H, ssaModel.U = H, U
         for i in range(10):
             hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=86400.,Nt=100,
-                                            accum=Constant(1*accum))
+                                            accum=1*accum)
             fronts.append(ssaModel.Lx)
             ssaModel.calve(Lx)
             H,U=ssaModel.init_shelf(accum)
@@ -655,7 +655,7 @@ if __name__ == '__main__':
         H,U=ssaModel.init_shelf(accum)
         ssaModel.H, ssaModel.U = H, U
         hnew,unew = ssaModel.integrate(ssaModel.H,ssaModel.U,dt=864000.,Nt=10000,
-                                          accum=Constant(1*accum))
+                                          accum=1*accum)
         plt.plot(*ssaModel.obslist[0].data)
         plt.xlabel('Time (s)')
         plt.ylabel('Ice Front Position (m)')
@@ -687,7 +687,7 @@ if __name__ == '__main__':
             H,U=ssaModel.init_shelf(accum)
         
             
-            H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=Constant(accum))
+            H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=accum)
             DIR = './tests/mr_conv/'
             FPROFBASE ='profs_noadv_dt_{}_dx_{}_Nt_2000.txt' 
             np.savetxt(DIR+FPROFBASE.format(DT,DX), ssaModel.data)
@@ -720,7 +720,7 @@ if __name__ == '__main__':
     	    H,U=ssaModel.init_shelf(accum)
     	
     	    
-    	    H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=Constant(accum))
+    	    H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=accum)
     	    DIR = './tests/mr_conv/'
     	    FPROFBASE ='profs_adv_dt_{}_dx_{}_Nt_2000.txt' 
     	    np.savetxt(DIR+FPROFBASE.format(DT,DX), ssaModel.data)
@@ -752,7 +752,7 @@ if __name__ == '__main__':
     	    H,U=ssaModel.init_shelf(accum)
     	
     	    
-    	    H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=Constant(accum))
+    	    H,U = ssaModel.integrate(H,U,dt=DT,Nt=2000,accum=accum)
     	    DIR = './tests/mr_conv/'
     	    FPROFBASE ='profs_calv_uni_2p8_N0_1000_xsep_20_dt_{}_dx_{}_Nt_2000.txt' 
     	    FFRONTBASE ='front_calv_uni_2p8_N0_1000_xsep_20_dt_{}_dx_{}_Nt_2000.txt' 
